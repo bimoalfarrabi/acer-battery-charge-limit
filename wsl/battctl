@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# battctl — WSL wrapper for the Windows battctl tool.
+# Adjust WIN_BATTCTL if your Windows username or install path differs.
+set -euo pipefail
+WIN_BATTCTL='C:\Users\YOUR_WINDOWS_USER\.local\bin\battctl.cmd'
+cd /mnt/c 2>/dev/null || true
+exec cmd.exe /c "$WIN_BATTCTL" "$@"
