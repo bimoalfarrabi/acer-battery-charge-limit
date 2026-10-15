@@ -13,6 +13,8 @@ $Mailbox   = 'C:\ProgramData\battctl\mailbox'
 $TaskName  = 'BattCtl'
 $WorkerSrc = Join-Path $SourceDir 'battctl-worker.ps1'
 $WorkerDst = Join-Path $TargetDir 'battctl-worker.ps1'
+$FrontendPsSrc  = Join-Path $SourceDir 'battctl.ps1'
+$FrontendCmdSrc = Join-Path $SourceDir 'battctl.cmd'
 
 $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()
            ).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
@@ -25,10 +27,38 @@ if (-not $isAdmin) {
 }
 
 if (-not (Test-Path $WorkerSrc)) { Write-Error "worker source not found: $WorkerSrc"; exit 1 }
+if (-not (Test-Path $FrontendPsSrc)) { Write-Error "front-end source not found: $FrontendPsSrc"; exit 1 }
+if (-not (Test-Path $FrontendCmdSrc)) { Write-Error "command wrapper source not found: $FrontendCmdSrc"; exit 1 }
 
 New-Item -ItemType Directory -Force -Path $TargetDir | Out-Null
 New-Item -ItemType Directory -Force -Path $Mailbox   | Out-Null
 Copy-Item -Path $WorkerSrc -Destination $WorkerDst -Force
+Copy-Item -Path $FrontendPsSrc -Destination (Join-Path $TargetDir 'battctl.ps1') -Force
+Copy-Item -Path $FrontendCmdSrc -Destination (Join-Path $TargetDir 'battctl.cmd') -Force
+
+$machinePath = [Environment]::GetEnvironmentVariable('Path', 'Machine')
+$targetPathKey = $TargetDir.TrimEnd([char]'\')
+$pathEntries = @($machinePath -split ';' | Where-Object { $_ -ne '' })
+$targetOnPath = $false
+foreach ($entry in $pathEntries) {
+    if ($entry.TrimEnd([char]'\') -ieq $targetPathKey) {
+        $targetOnPath = $true
+        break
+    }
+}
+if ($targetOnPath) {
+    Write-Host "$TargetDir is already on the Machine PATH."
+} else {
+    if ([string]::IsNullOrEmpty($machinePath)) {
+        $newMachinePath = $TargetDir
+    } elseif ($machinePath.EndsWith(';')) {
+        $newMachinePath = $machinePath + $TargetDir
+    } else {
+        $newMachinePath = $machinePath + ';' + $TargetDir
+    }
+    [Environment]::SetEnvironmentVariable('Path', $newMachinePath, 'Machine')
+    Write-Host "Added $TargetDir to the Machine PATH."
+}
 
 # Mailbox must be writable by the normal user (medium IL); worker dir stays admin-only.
 $me = "$env:USERDOMAIN\$env:USERNAME"
@@ -62,5 +92,5 @@ Write-Host ("  worker : $WorkerDst")
 Write-Host ("  mailbox: $Mailbox")
 Write-Host ("  task   : $TaskName  (SYSTEM / highest / on-demand)")
 Write-Host ''
-Write-Host 'Test with:  battctl status'
+Write-Host 'Test with:  battctl status (smoke test; a new terminal may be required for battctl to be found)'
 exit 0

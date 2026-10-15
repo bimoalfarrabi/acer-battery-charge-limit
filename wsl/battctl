@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # battctl — WSL wrapper for the Windows battctl tool.
-# Adjust WIN_BATTCTL if your Windows username or install path differs.
+# battctl is installed to C:\Program Files\battctl (added to the system PATH),
+# so the absolute path below is stable. Adjust only if you installed elsewhere.
 set -euo pipefail
-WIN_BATTCTL='C:\Users\YOUR_WINDOWS_USER\.local\bin\battctl.cmd'
+WIN_BATTCTL='C:\Program Files\battctl\battctl.cmd'
 cd /mnt/c 2>/dev/null || true
 exec cmd.exe /c "$WIN_BATTCTL" "$@"

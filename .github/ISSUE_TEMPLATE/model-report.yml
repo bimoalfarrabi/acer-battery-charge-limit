@@ -1,0 +1,61 @@
+name: Model compatibility report
+description: Report whether the tool works with your Acer model.
+title: "[Model report]: "
+labels:
+  - model-report
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this form to report whether the tool works on your Acer model. Please include the exact status output so maintainers can assess compatibility.
+
+  - type: input
+    id: acer-model
+    attributes:
+      label: Acer model
+      description: Enter the full model name, for example "Nitro AN515-57".
+      placeholder: Nitro AN515-57
+    validations:
+      required: true
+
+  - type: input
+    id: bios-version
+    attributes:
+      label: BIOS version
+      description: Find it in System Information (run msinfo32) under BIOS Version/Date.
+      placeholder: e.g. V1.20
+
+  - type: input
+    id: windows-version
+    attributes:
+      label: Windows version
+      description: Find it in Settings > System > About, or run winver.
+      placeholder: e.g. Windows 11 23H2
+
+  - type: dropdown
+    id: result
+    attributes:
+      label: Result
+      options:
+        - Works — limit toggles correctly
+        - Feature not present (exit code 2)
+        - Error / other
+    validations:
+      required: true
+
+  - type: textarea
+    id: status-output
+    attributes:
+      label: Output of `battctl status`
+      description: Paste the output verbatim, including all lines.
+      placeholder: Paste the complete output here.
+    validations:
+      required: true
+
+  - type: textarea
+    id: anything-else
+    attributes:
+      label: Anything else
+      description: Add any other details that may help reproduce or understand the result.
+    validations:
+      required: false

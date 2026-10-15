@@ -35,13 +35,14 @@ cd acer-battery-charge-limit
 
 The installer:
 
-- copies the worker to `C:\Program Files\battctl\` (admin-only, so `SYSTEM` can run it safely),
+- copies the worker and front end to `C:\Program Files\battctl\` (the worker is admin-only, so `SYSTEM` can run it safely),
 - creates the mailbox `C:\ProgramData\battctl\mailbox\` and grants *you* modify access,
-- registers the on-demand scheduled task **`BattCtl`** (runs as `SYSTEM`, highest privileges, 60 s cap).
+- registers the on-demand scheduled task **`BattCtl`** (runs as `SYSTEM`, highest privileges, 60 s cap),
+- adds `C:\Program Files\battctl` to the system `PATH`.
 
-Then make the front end reachable from anywhere by putting this repo (or a copy of
-`battctl.cmd` + `battctl.ps1`) on your `PATH`. To run `battctl` from **WSL**, see
-[WSL usage](#wsl-usage).
+After installation, `battctl` is available in any **new** terminal (already-open shells keep the old
+`PATH`). To update after `git pull`, re-run `.\battctl-install.cmd`. To run `battctl` from **WSL**,
+see [WSL usage](#wsl-usage).
 
 ## Usage
 
@@ -94,11 +95,16 @@ some Predator models. Reports for other models are welcome.
 
 ## Caveats
 
-- The flag lives in EC RAM. It **survives reboot and hibernate**, but is **lost on a full battery
-  drain / EC reset** — just run `battctl on` again.
+- The flag lives in EC RAM and may be **lost on a full battery drain / EC reset** — just run
+  `battctl on` again.
 - Repeated toggling is safe: it's an EC RAM write, not a flash write. The tool is idempotent.
 - Safe to use while Care Center is stuck *"still initializing"*: the WMI provider is served by the
   service stack (`ACCSvc.exe`), not the hung UI process (`ACCStd.exe`).
+
+## Known limitations
+
+- The charge-limit flag surviving hibernate/reboot is inferred, but **not yet verified on hardware**.
+  If it does not persist, re-run `battctl on`; an OnResume re-assert task can be added.
 
 ## Uninstall
 
@@ -108,14 +114,16 @@ some Predator models. Reports for other models are welcome.
 
 ## WSL usage
 
-A wrapper is included at [`wsl/battctl`](wsl/battctl). Copy it to `~/.local/bin/` (which is on
-`PATH` in most distros) and point it at your Windows copy of `battctl.cmd`:
+A wrapper is included at [`wsl/battctl`](wsl/battctl). It calls the fixed install path
+`C:\Program Files\battctl\battctl.cmd`, so it needs no editing:
 
 ```bash
 cp wsl/battctl ~/.local/bin/battctl && chmod +x ~/.local/bin/battctl
-# edit the path inside if your Windows username differs
 battctl status
 ```
+
+(UAC prompts are invisible from a WSL terminal, which is why the tool uses a `SYSTEM` task
+instead of self-elevation — see [How it works](#how-it-works).)
 
 ## Credits
 

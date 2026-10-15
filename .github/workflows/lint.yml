@@ -1,0 +1,33 @@
+name: PowerShell lint
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install PSScriptAnalyzer
+        shell: pwsh
+        run: Install-Module -Name PSScriptAnalyzer -Repository PSGallery -Force -Scope CurrentUser
+
+      - name: Analyze PowerShell scripts
+        shell: pwsh
+        run: |
+          $findings = @(Invoke-ScriptAnalyzer -Path . -Recurse -Settings ./PSScriptAnalyzerSettings.psd1)
+          if ($findings.Count -gt 0) {
+            $findings | Format-List * | Out-String | Write-Output
+          } else {
+            Write-Output 'No PSScriptAnalyzer findings.'
+          }
+
+          $errors = @($findings | Where-Object { $_.Severity -eq 'Error' })
+          if ($errors.Count -gt 0) {
+            exit 1
+          }

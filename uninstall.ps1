@@ -17,6 +17,16 @@ if (-not $isAdmin) {
 }
 
 Unregister-ScheduledTask -TaskName 'BattCtl' -Confirm:$false -ErrorAction SilentlyContinue
+$TargetDir = 'C:\Program Files\battctl'
+$machinePath = [Environment]::GetEnvironmentVariable('Path', 'Machine')
+if (-not [string]::IsNullOrEmpty($machinePath)) {
+    $pathEntries = @($machinePath -split ';' | Where-Object { $_ -ne '' })
+    $targetPathKey = $TargetDir.TrimEnd([char]'\')
+    $remainingPathEntries = @($pathEntries | Where-Object { $_.TrimEnd([char]'\') -ine $targetPathKey })
+    if ($remainingPathEntries.Count -ne $pathEntries.Count) {
+        [Environment]::SetEnvironmentVariable('Path', ($remainingPathEntries -join ';'), 'Machine')
+    }
+}
 Remove-Item 'C:\Program Files\battctl' -Recurse -Force -ErrorAction SilentlyContinue
 Remove-Item 'C:\ProgramData\battctl'   -Recurse -Force -ErrorAction SilentlyContinue
 
