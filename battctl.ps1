@@ -1,5 +1,5 @@
 <#
-    battctl.ps1 — user-level front end. Runs at medium integrity (NO UAC).
+    battctl.ps1 - user-level front end. Runs at medium integrity (NO UAC).
     Drops a nonce-tagged request in the mailbox, fires the "BattCtl" scheduled
     task (runs as SYSTEM), waits for the matching result and prints it.
 

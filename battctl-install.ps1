@@ -1,5 +1,5 @@
 <#
-    battctl-install.ps1 — one-time elevated setup.
+    battctl-install.ps1 - one-time elevated setup.
       * copies the worker to C:\Program Files\battctl  (admin-only, safe for SYSTEM to run)
       * creates the mailbox C:\ProgramData\battctl\mailbox and grants the invoking user Modify
       * registers the on-demand scheduled task "BattCtl" (SYSTEM, highest privileges, 60s cap)

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# battctl — WSL wrapper for the Windows battctl tool.
+# battctl - WSL wrapper for the Windows battctl tool.
 # battctl is installed to C:\Program Files\battctl (added to the system PATH),
 # so the absolute path below is stable. Adjust only if you installed elsewhere.
 set -euo pipefail

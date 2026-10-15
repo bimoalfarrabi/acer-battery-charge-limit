@@ -1,5 +1,5 @@
 <#
-    uninstall.ps1 — removes everything battctl installed. Self-elevates via UAC.
+    uninstall.ps1 - removes everything battctl installed. Self-elevates via UAC.
       * unregisters the "BattCtl" scheduled task
       * deletes C:\Program Files\battctl
       * deletes C:\ProgramData\battctl (mailbox)
