@@ -50,6 +50,7 @@ function Log-Direct([string]$s) {
         }
     } catch {
         # Logging must not change the worker exit code or operation outcome.
+        Write-Debug $_.Exception.Message
     }
 }
 

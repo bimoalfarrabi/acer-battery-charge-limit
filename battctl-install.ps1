@@ -77,7 +77,7 @@ $settings  = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGo
 
 Register-ScheduledTask -TaskName $TaskName -Action $action -Principal $principal -Settings $settings -Force | Out-Null
 
-function Set-TaskInteractiveUsersRun([string]$Name) {
+function Grant-TaskInteractiveUsersRun([string]$Name) {
     # Allow the normal (medium-IL) user to trigger the task without a UAC prompt.
     try {
         $sddl = 'D:(A;;GA;;;SY)(A;;GA;;;BA)(A;;GRGX;;;IU)'
@@ -92,7 +92,7 @@ function Set-TaskInteractiveUsersRun([string]$Name) {
     }
 }
 
-Set-TaskInteractiveUsersRun $TaskName
+Grant-TaskInteractiveUsersRun $TaskName
 
 $boot = New-ScheduledTaskTrigger -AtStartup
 $boot.Delay = 'PT20S'
@@ -103,7 +103,7 @@ $evt.Delay = 'PT20S'
 $evt.Subscription = '<QueryList><Query Id="0" Path="System"><Select Path="System">*[System[Provider[@Name=''Microsoft-Windows-Power-Troubleshooter''] and EventID=1]]</Select></Query></QueryList>'
 Register-ScheduledTask -TaskName $ResumeTaskName -Action $resumeAction -Principal $principal -Settings $settings `
     -Trigger @($boot, $evt) -Force | Out-Null
-Set-TaskInteractiveUsersRun $ResumeTaskName
+Grant-TaskInteractiveUsersRun $ResumeTaskName
 
 Write-Host ''
 Write-Host 'Installed:'
