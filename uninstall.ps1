@@ -1,6 +1,6 @@
 <#
     uninstall.ps1 - removes everything battctl installed. Self-elevates via UAC.
-      * unregisters the "BattCtl" scheduled task
+      * unregisters the "BattCtl" and "BattCtlResume" scheduled tasks
       * deletes C:\Program Files\battctl
       * deletes C:\ProgramData\battctl (mailbox)
 #>
@@ -17,6 +17,7 @@ if (-not $isAdmin) {
 }
 
 Unregister-ScheduledTask -TaskName 'BattCtl' -Confirm:$false -ErrorAction SilentlyContinue
+Unregister-ScheduledTask -TaskName 'BattCtlResume' -Confirm:$false -ErrorAction SilentlyContinue
 $TargetDir = 'C:\Program Files\battctl'
 $machinePath = [Environment]::GetEnvironmentVariable('Path', 'Machine')
 if (-not [string]::IsNullOrEmpty($machinePath)) {

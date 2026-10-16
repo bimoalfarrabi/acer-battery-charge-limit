@@ -3,6 +3,7 @@
       * copies the worker to C:\Program Files\battctl  (admin-only, safe for SYSTEM to run)
       * creates the mailbox C:\ProgramData\battctl\mailbox and grants the invoking user Modify
       * registers the on-demand scheduled task "BattCtl" (SYSTEM, highest privileges, 60s cap)
+      * registers the boot/resume scheduled task "BattCtlResume" (SYSTEM, highest privileges)
     Self-elevates via UAC on the first run. Re-run it any time to update.
 #>
 $ErrorActionPreference = 'Stop'
@@ -11,6 +12,7 @@ $SourceDir = Split-Path -Parent $PSCommandPath
 $TargetDir = 'C:\Program Files\battctl'
 $Mailbox   = 'C:\ProgramData\battctl\mailbox'
 $TaskName  = 'BattCtl'
+$ResumeTaskName = 'BattCtlResume'
 $WorkerSrc = Join-Path $SourceDir 'battctl-worker.ps1'
 $WorkerDst = Join-Path $TargetDir 'battctl-worker.ps1'
 $FrontendPsSrc  = Join-Path $SourceDir 'battctl.ps1'
@@ -67,30 +69,48 @@ $null = icacls (Split-Path $Mailbox -Parent) /grant "${me}:(OI)(CI)M"
 
 $action = New-ScheduledTaskAction -Execute 'powershell.exe' `
     -Argument ('-NoProfile -ExecutionPolicy Bypass -File "' + $WorkerDst + '"')
+$resumeAction = New-ScheduledTaskAction -Execute 'powershell.exe' `
+    -Argument ('-NoProfile -ExecutionPolicy Bypass -File "' + $WorkerDst + '" -Action restore')
 $principal = New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest
 $settings  = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries `
     -ExecutionTimeLimit (New-TimeSpan -Seconds 60) -MultipleInstances IgnoreNew
 
 Register-ScheduledTask -TaskName $TaskName -Action $action -Principal $principal -Settings $settings -Force | Out-Null
 
-# Allow the normal (medium-IL) user to trigger the task without a UAC prompt.
-try {
-    $sddl = 'D:(A;;GA;;;SY)(A;;GA;;;BA)(A;;GRGX;;;IU)'
-    $svc  = New-Object -ComObject 'Schedule.Service'
-    $svc.Connect()
-    $root = $svc.GetFolder('\')
-    $t = $root.GetTask($TaskName)
-    $t.SetSecurityDescriptor($sddl, 0)
-    Write-Host 'Task security descriptor updated (Interactive Users may Run).'
-} catch {
-    Write-Host ("Note: could not set task SDDL automatically: " + $_.Exception.Message)
+function Set-TaskInteractiveUsersRun([string]$Name) {
+    # Allow the normal (medium-IL) user to trigger the task without a UAC prompt.
+    try {
+        $sddl = 'D:(A;;GA;;;SY)(A;;GA;;;BA)(A;;GRGX;;;IU)'
+        $svc  = New-Object -ComObject 'Schedule.Service'
+        $svc.Connect()
+        $root = $svc.GetFolder('\')
+        $t = $root.GetTask($Name)
+        $t.SetSecurityDescriptor($sddl, 0)
+        Write-Host ("Task security descriptor updated (Interactive Users may Run): " + $Name)
+    } catch {
+        Write-Host ("Note: could not set task SDDL automatically for " + $Name + ": " + $_.Exception.Message)
+    }
 }
+
+Set-TaskInteractiveUsersRun $TaskName
+
+$boot = New-ScheduledTaskTrigger -AtStartup
+$boot.Delay = 'PT20S'
+$cls = Get-CimClass -Namespace root/Microsoft/Windows/TaskScheduler -ClassName MSFT_TaskEventTrigger
+$evt = New-CimInstance -CimClass $cls -ClientOnly
+$evt.Enabled = $true
+$evt.Delay = 'PT20S'
+$evt.Subscription = '<QueryList><Query Id="0" Path="System"><Select Path="System">*[System[Provider[@Name=''Microsoft-Windows-Power-Troubleshooter''] and EventID=1]]</Select></Query></QueryList>'
+Register-ScheduledTask -TaskName $ResumeTaskName -Action $resumeAction -Principal $principal -Settings $settings `
+    -Trigger @($boot, $evt) -Force | Out-Null
+Set-TaskInteractiveUsersRun $ResumeTaskName
 
 Write-Host ''
 Write-Host 'Installed:'
 Write-Host ("  worker : $WorkerDst")
 Write-Host ("  mailbox: $Mailbox")
 Write-Host ("  task   : $TaskName  (SYSTEM / highest / on-demand)")
+Write-Host ("  resume : $ResumeTaskName  (SYSTEM / highest / boot and resume)")
 Write-Host ''
 Write-Host 'Test with:  battctl status (smoke test; a new terminal may be required for battctl to be found)'
 exit 0
