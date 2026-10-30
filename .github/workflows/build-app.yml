@@ -1,0 +1,58 @@
+name: Build app
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - '*.props'
+      - '*.targets'
+      - '.github/workflows/build-app.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - '*.props'
+      - '*.targets'
+      - '.github/workflows/build-app.yml'
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up .NET 9
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '9.0.x'
+
+      - name: Cache NuGet packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.csproj', 'NuGet.config') }}
+          restore-keys: ${{ runner.os }}-nuget-
+
+      - name: Restore
+        run: dotnet restore src/BattCtl.App/BattCtl.App.csproj -p:Platform=x64
+
+      - name: Build
+        run: dotnet build src/BattCtl.App/BattCtl.App.csproj -c Release -p:Platform=x64 --no-restore
+
+      # A missing resources.pri makes the app exit silently or open an unstyled
+      # window, and it is the first thing to break when a build step changes.
+      # Fail the build instead of shipping that.
+      - name: Verify app payload
+        shell: pwsh
+        run: |
+          $out = 'src/BattCtl.App/bin/x64/Release/net9.0-windows10.0.26100.0/win-x64'
+          $required = @('BattCtl.App.exe', 'BattCtl.App.dll', 'resources.pri', 'Microsoft.WinUI.dll')
+          $missing = @($required | Where-Object { -not (Test-Path (Join-Path $out $_)) })
+          if ($missing.Count -gt 0) {
+            Write-Error "Missing from build output: $($missing -join ', ')"
+            exit 1
+          }
+          Write-Output "Build output verified: $($required -join ', ')"

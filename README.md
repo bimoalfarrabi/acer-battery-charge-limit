@@ -73,6 +73,10 @@ which redirects build output to a local drive and keeps the sources in WSL:
 
 Name conflicts: the app is unpackaged and uses `AppInstance` for single-instance redirect.
 
+CI runs `dotnet build` on `windows-latest` for every change under `src/`, and fails if
+`resources.pri` or the WinUI assemblies are missing from the output — a missing `resources.pri`
+makes the app exit silently or open an unstyled window.
+
 ## Requirements
 
 - Windows 10/11, an Acer laptop whose firmware exposes the WMI charge-limit interface
@@ -236,6 +240,7 @@ install-ui.ps1         desktop app install (+ refreshes worker and CLI)
 build.ps1, run.ps1     source build wrappers (WSL UNC safe)
 src/BattCtl.App/       WinUI 3 app: Views, ViewModels, Services, Styles, Assets
 docs/                  UI architecture contract, design brief, WinUI 3 research
+.github/workflows/     lint.yml (PowerShell lint), build-app.yml (WinUI build)
 ```
 
 ## Design notes
