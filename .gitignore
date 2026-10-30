@@ -5,3 +5,7 @@ desktop.ini
 # Logs / scratch
 *.log
 *.tmp
+
+# Build output
+**/bin/
+**/obj/

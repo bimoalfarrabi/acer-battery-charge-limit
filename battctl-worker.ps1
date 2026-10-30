@@ -1,5 +1,5 @@
 param(
-    [ValidateSet('', 'status', 'on', 'off', 'toggle', 'restore')]
+    [ValidateSet('', 'status', 'on', 'off', 'toggle', 'restore', 'snapshot')]
     [string]$Action = ''
 )
 
@@ -64,6 +64,224 @@ function Save-DesiredState([int]$state) {
     [IO.File]::WriteAllText($DesiredPath, [string]$state, (New-Object System.Text.UTF8Encoding($false)))
 }
 
+function Read-Limit {
+    $r = $bc.GetBatteryHealthControlStatus([byte]1, [byte]1, [byte[]]@(0, 0))
+    if ([int]$r.uReturn[0] -ne 0) { return $null }
+    return [int]$r.uFunctionStatus[0]
+}
+function Write-Limit([int]$on) {
+    $r = $bc.SetBatteryHealthControl([byte]1, [byte]1, [byte]$on, [byte[]]@(0, 0, 0, 0, 0))
+    return ([int]$r.uReturn -eq 0)
+}
+function Describe([int]$s) {
+    if ($s -eq 1) { return 'ON  (charge limited to 80%)' }
+    if ($s -eq 0) { return 'OFF (charges to 100%)' }
+    return "UNKNOWN ($s)"
+}
+
+function Get-NullableNumber($Object, [string]$Name) {
+    if ($null -eq $Object) { return $null }
+    $property = $Object.PSObject.Properties[$Name]
+    if ($null -eq $property -or $null -eq $property.Value) { return $null }
+    try {
+        $number = [long]$property.Value
+        if ($number -ge 4294967295) { return $null }
+        return $number
+    } catch { return $null }
+}
+
+function Get-NullableBoolean($Value) {
+    if ($null -eq $Value) { return $null }
+    try { return [bool]$Value } catch { return $null }
+}
+
+function Get-SnapshotRestoreLog {
+    $entries = New-Object 'System.Collections.Generic.List[object]'
+    try {
+        if (-not (Test-Path -LiteralPath $RestoreLogPath -PathType Leaf)) { return ,@() }
+        $lines = [IO.File]::ReadAllLines($RestoreLogPath)
+        $valid = $true
+        for ($i = 0; $i -lt $lines.Length; $i++) {
+            $match = [regex]::Match($lines[$i], '^\[(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\] (.*)$')
+            if (-not $match.Success) { $valid = $false; break }
+            $parsedAt = [DateTime]::MinValue
+            $ok = [DateTime]::TryParseExact(
+                $match.Groups[1].Value,
+                'yyyy-MM-dd HH:mm:ss',
+                [Globalization.CultureInfo]::InvariantCulture,
+                [Globalization.DateTimeStyles]::None,
+                [ref]$parsedAt
+            )
+            if (-not $ok) { $valid = $false; break }
+            $entries.Add([pscustomobject][ordered]@{
+                at = $parsedAt.ToString('yyyy-MM-ddTHH:mm:ss', [Globalization.CultureInfo]::InvariantCulture)
+                message = $match.Groups[2].Value
+            })
+        }
+        if (-not $valid) { return ,@() }
+        $entryArray = $entries.ToArray()
+        if ($entryArray.Count -gt 20) {
+            return ,$entryArray[($entryArray.Count - 20)..($entryArray.Count - 1)]
+        }
+        return ,$entryArray
+    } catch {
+        return ,@()
+    }
+}
+
+function Get-SnapshotJson([bool]$supported) {
+    $desiredValue = $null
+    try {
+        $desiredText = [IO.File]::ReadAllText($DesiredPath)
+        if ($desiredText.Trim() -match '^[01]$') { $desiredValue = ([int]$desiredText.Trim() -eq 1) }
+    } catch { $desiredValue = $null }
+
+    $restoreEntries = Get-SnapshotRestoreLog
+    $installedAt = $null
+    try {
+        if (Test-Path -LiteralPath $DataDir -PathType Container) {
+            $installedAt = (Get-Item -LiteralPath $DataDir).CreationTime.ToString(
+                'yyyy-MM-ddTHH:mm:ss', [Globalization.CultureInfo]::InvariantCulture
+            )
+        }
+    } catch { $installedAt = $null }
+
+    $limitOn = $null
+    if ($supported) {
+        try {
+            $limitValue = Read-Limit
+            if ($null -ne $limitValue) { $limitOn = ([int]$limitValue -eq 1) }
+        } catch { $limitOn = $null }
+    }
+
+    $battery = [ordered]@{
+        present = $false
+        percent = $null
+        state = $null
+        powerOnline = $null
+        designCapacityMWh = $null
+        fullChargeCapacityMWh = $null
+        wearPercent = $null
+        cycleCount = $null
+        voltageMv = $null
+        rateMw = $null
+        remainingCapacityMWh = $null
+        estimatedMinutes = $null
+    }
+
+        $staticData = $null
+        try { $staticData = Get-WmiObject -Namespace root\WMI -Class BatteryStaticData -ErrorAction Stop | Select-Object -First 1 } catch { $staticData = $null }
+
+        $cycleCountData = $null
+        try { $cycleCountData = Get-WmiObject -Namespace root\WMI -Class BatteryCycleCount -ErrorAction Stop | Select-Object -First 1 } catch { $cycleCountData = $null }
+
+        $fullCapacityData = $null
+        try { $fullCapacityData = Get-WmiObject -Namespace root\WMI -Class BatteryFullChargedCapacity -ErrorAction Stop | Select-Object -First 1 } catch { $fullCapacityData = $null }
+
+        $batteryStatusData = $null
+        try { $batteryStatusData = Get-WmiObject -Namespace root\WMI -Class BatteryStatus -ErrorAction Stop | Select-Object -First 1 } catch { $batteryStatusData = $null }
+
+        $win32Battery = $null
+        try { $win32Battery = Get-WmiObject -Namespace root\cimv2 -Class Win32_Battery -ErrorAction Stop | Select-Object -First 1 } catch { $win32Battery = $null }
+
+        $designCapacity = Get-NullableNumber $staticData 'DesignedCapacity'
+        $cycleCount = Get-NullableNumber $cycleCountData 'CycleCount'
+        $fullChargeCapacity = Get-NullableNumber $fullCapacityData 'FullChargedCapacity'
+        $remainingCapacity = Get-NullableNumber $batteryStatusData 'RemainingCapacity'
+        $voltage = Get-NullableNumber $batteryStatusData 'Voltage'
+        $rate = Get-NullableNumber $batteryStatusData 'Rate'
+        $estimatedPercent = Get-NullableNumber $win32Battery 'EstimatedChargeRemaining'
+        $win32State = Get-NullableNumber $win32Battery 'BatteryStatus'
+        $charging = $null
+        $discharging = $null
+        $powerOnline = $null
+        if ($null -ne $batteryStatusData) {
+            $charging = Get-NullableBoolean $batteryStatusData.Charging
+            $discharging = Get-NullableBoolean $batteryStatusData.Discharging
+            $powerOnline = Get-NullableBoolean $batteryStatusData.PowerOnline
+        }
+
+        $state = 'Unknown'
+        if ($null -ne $batteryStatusData) {
+            if ($null -ne $charging -and $charging) {
+                $state = 'Charging'
+            } elseif ($null -ne $discharging -and $discharging) {
+                $state = 'Discharging'
+            } elseif ($null -ne $charging -and $null -ne $discharging) {
+                $state = 'NotCharging'
+            }
+        } elseif ($null -ne $win32State) {
+            switch ([int]$win32State) {
+                1 { $state = 'Discharging' }
+                { $_ -in 6, 7, 8, 9 } { $state = 'Charging' }
+                { $_ -in 2, 3, 11 } { $state = 'NotCharging' }
+                default { $state = 'Unknown' }
+            }
+        }
+
+        $percent = $null
+        # Match the OS taskbar/Settings reading when available; capacity math is only a fallback.
+        if ($null -ne $estimatedPercent -and $estimatedPercent -ge 0 -and $estimatedPercent -le 100) {
+            $percent = [int]$estimatedPercent
+        } elseif ($null -ne $remainingCapacity -and $null -ne $fullChargeCapacity -and $fullChargeCapacity -ne 0) {
+            $percent = [int][Math]::Round(
+                (([double]$remainingCapacity / [double]$fullChargeCapacity) * 100),
+                [MidpointRounding]::AwayFromZero
+            )
+        }
+
+        $wearPercent = $null
+        if ($null -ne $designCapacity -and $designCapacity -ne 0 -and
+            $null -ne $fullChargeCapacity -and $fullChargeCapacity -ne 0) {
+            if ($fullChargeCapacity -gt $designCapacity) {
+                $wearPercent = 0
+            } else {
+                $wearPercent = [Math]::Round((1 - ([double]$fullChargeCapacity / [double]$designCapacity)) * 100, 1)
+            }
+        }
+
+        $estimatedMinutes = $null
+        if ($state -eq 'Discharging' -and $null -ne $rate -and $rate -lt 0 -and $null -ne $remainingCapacity) {
+            $estimatedMinutes = [long][Math]::Round(([Math]::Abs([double]$remainingCapacity) / [Math]::Abs([double]$rate)) * 60)
+        }
+
+        $battery.present = ($null -ne $staticData -or $null -ne $fullCapacityData -or
+            $null -ne $batteryStatusData -or $null -ne $win32Battery)
+        $battery.percent = $percent
+        $battery.state = $state
+        $battery.powerOnline = $powerOnline
+        $battery.designCapacityMWh = $designCapacity
+        $battery.fullChargeCapacityMWh = $fullChargeCapacity
+        $battery.wearPercent = $wearPercent
+        $battery.cycleCount = $cycleCount
+        $battery.voltageMv = $voltage
+        $battery.rateMw = $rate
+        $battery.remainingCapacityMWh = $remainingCapacity
+        $battery.estimatedMinutes = $estimatedMinutes
+    $snapshot = [ordered]@{
+        schema = 2
+        limitOn = $limitOn
+        desired = $desiredValue
+        supported = [bool]$supported
+        battery = $battery
+        restoreLog = $restoreEntries
+        installedAt = $installedAt
+    }
+    $json = ConvertTo-Json -InputObject $snapshot -Depth 8 -Compress
+    if ($json.Contains("`r") -or $json.Contains("`n")) { $json = $json -replace '[\r\n]', '' }
+    if ($json.Contains("`r") -or $json.Contains("`n")) { throw 'Snapshot JSON contains a newline.' }
+    return $json
+}
+
+function Write-SnapshotResult([string]$json, [int]$code) {
+    if ($directMode) {
+        Write-Output $json
+        exit $code
+    }
+    Say $json
+    Emit $nonce $code
+}
+
 $directMode = -not [string]::IsNullOrEmpty($Action)
 $command = ''
 if ($directMode) {
@@ -75,7 +293,7 @@ if ($directMode) {
     $parts = $req.Trim() -split '\|', 2
     if ($parts.Count -ge 1) { $nonce   = $parts[0].Trim() }
     if ($parts.Count -ge 2) { $command = $parts[1].Trim().ToLower() }
-    if ($nonce -notmatch '^[0-9A-Za-z]{4,64}$' -or @('status', 'on', 'off', 'toggle') -notcontains $command) {
+    if ($nonce -notmatch '^[0-9A-Za-z]{4,64}$' -or @('status', 'on', 'off', 'toggle', 'snapshot') -notcontains $command) {
         Say 'ERROR: malformed request.'
         Emit $nonce 4
     }
@@ -101,6 +319,10 @@ for ($attempt = 1; $attempt -le $attempts -and $null -eq $bc; $attempt++) {
     if ($null -eq $bc -and $attempt -lt $attempts) { Start-Sleep -Seconds 3 }
 }
 if ($null -eq $bc) {
+    if ($command -eq 'snapshot') {
+        $snapshotJson = Get-SnapshotJson $false
+        Write-SnapshotResult $snapshotJson 2
+    }
     if ($directMode) {
         Direct-Exit 2 'root\WMI:BatteryControl instance not found; provider did not become ready.'
     } else {
@@ -110,19 +332,15 @@ if ($null -eq $bc) {
     }
 }
 
-function Read-Limit {
-    $r = $bc.GetBatteryHealthControlStatus([byte]1, [byte]1, [byte[]]@(0, 0))
-    if ([int]$r.uReturn[0] -ne 0) { return $null }
-    return [int]$r.uFunctionStatus[0]
-}
-function Write-Limit([int]$on) {
-    $r = $bc.SetBatteryHealthControl([byte]1, [byte]1, [byte]$on, [byte[]]@(0, 0, 0, 0, 0))
-    return ([int]$r.uReturn -eq 0)
-}
-function Describe([int]$s) {
-    if ($s -eq 1) { return 'ON  (charge limited to 80%)' }
-    if ($s -eq 0) { return 'OFF (charges to 100%)' }
-    return "UNKNOWN ($s)"
+
+if ($command -eq 'snapshot') {
+    $snapshotCode = 0
+    $snapshotJson = $null
+    try { $snapshotJson = Get-SnapshotJson $true } catch {
+        $snapshotCode = 1
+        $snapshotJson = Get-SnapshotJson $false
+    }
+    Write-SnapshotResult $snapshotJson $snapshotCode
 }
 
 if ($directMode -and $command -eq 'restore') {
@@ -151,7 +369,9 @@ if ($directMode -and $command -eq 'restore') {
 }
 
 $before = $null
-try { $before = Read-Limit } catch { $before = $null }
+if ($command -ne 'snapshot') {
+    try { $before = Read-Limit } catch { $before = $null }
+}
 
 switch ($command) {
     'status' {
