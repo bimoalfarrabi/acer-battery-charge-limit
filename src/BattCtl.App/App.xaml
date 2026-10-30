@@ -1,0 +1,16 @@
+<Application
+    x:Class="BattCtl.App.App"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:controls="using:Microsoft.UI.Xaml.Controls"
+    xmlns:viewmodels="using:BattCtl.App.ViewModels">
+    <Application.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <controls:XamlControlsResources />
+                <ResourceDictionary Source="Styles/Fluent.xaml" />
+            </ResourceDictionary.MergedDictionaries>
+            <viewmodels:BoolToVisibilityConverter x:Key="BoolToVisibilityConverter" />
+        </ResourceDictionary>
+    </Application.Resources>
+</Application>

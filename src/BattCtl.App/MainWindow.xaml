@@ -1,0 +1,50 @@
+<Window
+    x:Class="BattCtl.App.MainWindow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    Title="Battery Charge Limit">
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <TitleBar x:Name="AppTitleBar"
+                  Title="Battery Charge Limit"
+                  IsPaneToggleButtonVisible="False"
+                  IsBackButtonVisible="False">
+            <TitleBar.IconSource>
+                <FontIconSource Glyph="&#xE83F;" />
+            </TitleBar.IconSource>
+        </TitleBar>
+
+        <NavigationView x:Name="NavigationViewControl"
+                        Grid.Row="1"
+                        PaneDisplayMode="Left"
+                        OpenPaneLength="240"
+                        CompactModeThresholdWidth="1200"
+                        IsSettingsVisible="False"
+                        IsBackButtonVisible="Collapsed"
+                        AlwaysShowHeader="False"
+                        SelectionChanged="NavigationViewControl_SelectionChanged">
+            <NavigationView.MenuItems>
+                <NavigationViewItem x:Name="DashboardItem" Content="Dashboard" Tag="Dashboard">
+                    <NavigationViewItem.Icon>
+                        <FontIcon Glyph="&#xE83F;" />
+                    </NavigationViewItem.Icon>
+                </NavigationViewItem>
+                <NavigationViewItem Content="Health" Tag="Health">
+                    <NavigationViewItem.Icon>
+                        <FontIcon Glyph="&#xE95E;" />
+                    </NavigationViewItem.Icon>
+                </NavigationViewItem>
+                <NavigationViewItem Content="Settings" Tag="Settings">
+                    <NavigationViewItem.Icon>
+                        <FontIcon Glyph="&#xE713;" />
+                    </NavigationViewItem.Icon>
+                </NavigationViewItem>
+            </NavigationView.MenuItems>
+            <Frame x:Name="ContentFrame" />
+        </NavigationView>
+    </Grid>
+</Window>

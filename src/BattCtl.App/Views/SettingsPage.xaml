@@ -1,0 +1,119 @@
+<Page
+    x:Class="BattCtl.App.Views.SettingsPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <ScrollViewer>
+        <StackPanel Padding="24" Spacing="16" MaxWidth="720">
+
+            <TextBlock Text="Settings" Style="{ThemeResource TitleTextBlockStyle}" />
+
+            <!-- Startup -->
+            <Border Style="{StaticResource CardBorderStyle}">
+                <StackPanel Spacing="6">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Grid.Column="0" Padding="0,0,16,0">
+                            <TextBlock Text="Launch at login" Style="{ThemeResource BodyStrongTextBlockStyle}" />
+                            <TextBlock Text="Starts BattCtl when you sign in. You can also manage it in Task Manager, on the Startup apps tab."
+                                       Style="{StaticResource CaptionSecondaryTextBlockStyle}"
+                                       TextWrapping="Wrap" />
+                        </StackPanel>
+                        <ToggleSwitch x:Name="StartupSwitch"
+                                      Grid.Column="1"
+                                      HorizontalAlignment="Right"
+                                      VerticalAlignment="Center"
+                                      OnContent="On" OffContent="Off"
+                                      Toggled="StartupSwitch_Toggled" />
+                    </Grid>
+                    <InfoBar x:Name="StartupInfoBar"
+                             Severity="Error"
+                             IsClosable="True"
+                             Closed="StartupInfoBar_Closed" />
+                </StackPanel>
+            </Border>
+
+            <!-- Charge limit maintenance -->
+            <Border Style="{StaticResource CardBorderStyle}">
+                <StackPanel Spacing="10">
+                    <TextBlock Text="Charge limit" Style="{ThemeResource BodyStrongTextBlockStyle}" />
+                    <Grid>
+                        <TextBlock Text="Saved limit state" Style="{StaticResource BodySecondaryTextBlockStyle}" />
+                        <TextBlock x:Name="SavedLimitValue"
+                                   Style="{ThemeResource BodyStrongTextBlockStyle}"
+                                   HorizontalAlignment="Right" />
+                    </Grid>
+                    <StackPanel Orientation="Horizontal" Spacing="10">
+                        <Button Content="Re-apply saved limit"
+                                IsEnabled="{x:Bind ViewModel.CanReapply, Mode=OneWay}"
+                                Click="Reapply_Click" />
+                        <ProgressRing Width="16" Height="16"
+                                      VerticalAlignment="Center"
+                                      IsIndeterminate="True"
+                                      Visibility="{x:Bind ViewModel.ReapplyPending, Mode=OneWay, Converter={StaticResource BoolToVisibilityConverter}}" />
+                    </StackPanel>
+                    <TextBlock Text="Sends the saved state to the firmware again. Useful if the limit was lost after a BIOS or EC update."
+                               Style="{StaticResource CaptionSecondaryTextBlockStyle}"
+                               TextWrapping="Wrap" />
+                    <InfoBar x:Name="ReapplyInfoBar"
+                             IsClosable="True"
+                             Closed="ReapplyInfoBar_Closed" />
+                </StackPanel>
+            </Border>
+
+            <!-- Restore log -->
+            <Border Style="{StaticResource CardBorderStyle}">
+                <StackPanel Spacing="10">
+                    <TextBlock Text="Restore log" Style="{ThemeResource BodyStrongTextBlockStyle}" />
+                    <TextBlock Text="What the service did at startup, newest first."
+                               Style="{StaticResource CaptionSecondaryTextBlockStyle}" />
+                    <ListView x:Name="RestoreLogList"
+                              MaxHeight="220"
+                              ItemsSource="{x:Bind ViewModel.RestoreLogLines, Mode=OneWay}"
+                              SelectionMode="None"
+                              IsItemClickEnabled="False">
+                        <ListView.ItemTemplate>
+                            <DataTemplate>
+                                <TextBlock Text="{Binding}"
+                                           Style="{ThemeResource CaptionTextBlockStyle}"
+                                           TextWrapping="Wrap" />
+                            </DataTemplate>
+                        </ListView.ItemTemplate>
+                    </ListView>
+                    <TextBlock Text="No restore events recorded yet."
+                               Style="{StaticResource CaptionSecondaryTextBlockStyle}"
+                               Visibility="{x:Bind ViewModel.HasRestoreLog, Mode=OneWay, Converter={StaticResource BoolToVisibilityConverter}, ConverterParameter=Invert}" />
+                </StackPanel>
+            </Border>
+
+            <!-- Status export -->
+            <Border Style="{StaticResource CardBorderStyle}">
+                <StackPanel Spacing="6">
+                    <TextBlock Text="Status export" Style="{ThemeResource BodyStrongTextBlockStyle}" />
+                    <TextBlock x:Name="CopyStatusCaption"
+                               Text="Copies the latest snapshot as JSON, for troubleshooting."
+                               Style="{StaticResource CaptionSecondaryTextBlockStyle}"
+                               TextWrapping="Wrap" />
+                    <Button Content="Copy status as JSON"
+                            HorizontalAlignment="Left"
+                            IsEnabled="{x:Bind ViewModel.HasSnapshot, Mode=OneWay}"
+                            Click="CopyStatus_Click" />
+                </StackPanel>
+            </Border>
+
+            <!-- About -->
+            <Border Style="{StaticResource CardBorderStyle}">
+                <StackPanel Spacing="4">
+                    <TextBlock Text="BattCtl" Style="{ThemeResource BodyStrongTextBlockStyle}" />
+                    <TextBlock x:Name="VersionText" Style="{StaticResource CaptionSecondaryTextBlockStyle}" />
+                    <TextBlock Text="Battery charge limit and status for this laptop. Everything runs locally through the BattCtl service; no data leaves the machine."
+                               Style="{StaticResource CaptionSecondaryTextBlockStyle}"
+                               TextWrapping="Wrap" />
+                </StackPanel>
+            </Border>
+        </StackPanel>
+    </ScrollViewer>
+</Page>

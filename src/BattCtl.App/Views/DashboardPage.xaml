@@ -1,0 +1,155 @@
+<Page
+    x:Class="BattCtl.App.Views.DashboardPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <ScrollViewer>
+        <StackPanel Padding="24" Spacing="20">
+
+            <!-- Header -->
+            <Grid>
+                <StackPanel>
+                    <TextBlock Text="Battery" Style="{ThemeResource TitleTextBlockStyle}" />
+                    <TextBlock x:Name="UpdatedCaption" Style="{StaticResource CaptionSecondaryTextBlockStyle}" />
+                </StackPanel>
+                <ProgressRing HorizontalAlignment="Right"
+                              VerticalAlignment="Center"
+                              Width="16" Height="16"
+                              IsIndeterminate="True"
+                              Visibility="{x:Bind ViewModel.IsRefreshing, Mode=OneWay, Converter={StaticResource BoolToVisibilityConverter}}" />
+            </Grid>
+
+            <!-- Content -->
+            <StackPanel Spacing="20"
+                        Visibility="{x:Bind ViewModel.ShowContent, Mode=OneWay, Converter={StaticResource BoolToVisibilityConverter}}">
+
+                <!-- Focal point: current charge -->
+                <StackPanel Spacing="2">
+                    <TextBlock x:Name="PercentBlock" Style="{ThemeResource DisplayTextBlockStyle}">
+                        <Run x:Name="PercentRun" Text="0" /><Run Text="%" FontSize="28" />
+                    </TextBlock>
+                    <TextBlock x:Name="StateSummary" Style="{StaticResource BodySecondaryTextBlockStyle}" />
+                </StackPanel>
+
+                <!-- Primary action: the 80% limit -->
+                <Border Style="{StaticResource CardBorderStyle}">
+                    <StackPanel Spacing="10">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Grid.Column="0" Padding="0,0,16,0">
+                                <TextBlock Text="Charge limit to 80%"
+                                           Style="{ThemeResource BodyStrongTextBlockStyle}" />
+                                <TextBlock x:Name="LimitState"
+                                           Style="{StaticResource CaptionSecondaryTextBlockStyle}"
+                                           TextWrapping="Wrap" />
+                            </StackPanel>
+                            <StackPanel Grid.Column="1"
+                                        Orientation="Horizontal"
+                                        HorizontalAlignment="Right"
+                                        VerticalAlignment="Center"
+                                        Spacing="10">
+                                <ProgressRing Width="16" Height="16"
+                                              IsIndeterminate="True"
+                                              Visibility="{x:Bind ViewModel.IsLimitPending, Mode=OneWay, Converter={StaticResource BoolToVisibilityConverter}}" />
+                                <ToggleSwitch x:Name="LimitSwitch"
+                                              OnContent="On" OffContent="Off"
+                                              IsOn="{x:Bind ViewModel.LimitDisplayValue, Mode=OneWay}"
+                                              IsEnabled="{x:Bind ViewModel.LimitToggleEnabled, Mode=OneWay}"
+                                              Toggled="LimitSwitch_Toggled" />
+                            </StackPanel>
+                        </Grid>
+                        <Button Content="Check again"
+                                HorizontalAlignment="Left"
+                                Click="CheckAgain_Click"
+                                Visibility="{x:Bind ViewModel.ShowLimitRetry, Mode=OneWay, Converter={StaticResource BoolToVisibilityConverter}}" />
+                        <InfoBar x:Name="LimitInfoBar"
+                                 IsClosable="True"
+                                 Closed="LimitInfoBar_Closed" />
+                    </StackPanel>
+                </Border>
+
+                <!-- At a glance -->
+                <Grid ColumnSpacing="12">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <Border Style="{StaticResource StatTileBorderStyle}" Grid.Column="0">
+                        <StackPanel Spacing="2">
+                            <TextBlock Text="Health" Style="{StaticResource CaptionSecondaryTextBlockStyle}" />
+                            <TextBlock x:Name="HealthValue" Style="{ThemeResource BodyLargeTextBlockStyle}" />
+                        </StackPanel>
+                    </Border>
+                    <Border Style="{StaticResource StatTileBorderStyle}" Grid.Column="1">
+                        <StackPanel Spacing="2">
+                            <TextBlock Text="Cycles" Style="{StaticResource CaptionSecondaryTextBlockStyle}" />
+                            <TextBlock x:Name="CyclesValue" Style="{ThemeResource BodyLargeTextBlockStyle}" />
+                        </StackPanel>
+                    </Border>
+                    <Border Style="{StaticResource StatTileBorderStyle}" Grid.Column="2">
+                        <StackPanel Spacing="2">
+                            <TextBlock Text="Voltage" Style="{StaticResource CaptionSecondaryTextBlockStyle}" />
+                            <TextBlock x:Name="VoltageValue" Style="{ThemeResource BodyLargeTextBlockStyle}" />
+                        </StackPanel>
+                    </Border>
+                </Grid>
+            </StackPanel>
+
+            <!-- First-launch skeleton, shape-matched to the content above -->
+            <StackPanel x:Name="SkeletonPanel"
+                        Spacing="20"
+                        Opacity="1"
+                        Visibility="{x:Bind ViewModel.ShowSkeleton, Mode=OneWay, Converter={StaticResource BoolToVisibilityConverter}}">
+                <Border Width="190" Height="88" CornerRadius="8"
+                        Background="{ThemeResource ControlFillColorSecondaryBrush}" />
+                <Border Width="240" Height="18" CornerRadius="4"
+                        Background="{ThemeResource ControlFillColorSecondaryBrush}" />
+                <Border Height="104" CornerRadius="8"
+                        Background="{ThemeResource ControlFillColorSecondaryBrush}" />
+                <Grid ColumnSpacing="12">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <Border Grid.Column="0" Height="64" CornerRadius="8"
+                            Background="{ThemeResource ControlFillColorSecondaryBrush}" />
+                    <Border Grid.Column="1" Height="64" CornerRadius="8"
+                            Background="{ThemeResource ControlFillColorSecondaryBrush}" />
+                    <Border Grid.Column="2" Height="64" CornerRadius="8"
+                            Background="{ThemeResource ControlFillColorSecondaryBrush}" />
+                </Grid>
+            </StackPanel>
+
+            <!-- No cache and the service is unreachable -->
+            <StackPanel Spacing="12"
+                        HorizontalAlignment="Center"
+                        Padding="0,48"
+                        Visibility="{x:Bind ViewModel.ShowLoadError, Mode=OneWay, Converter={StaticResource BoolToVisibilityConverter}}">
+                <FontIcon Glyph="&#xE783;" FontSize="32" HorizontalAlignment="Center"
+                          Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                <TextBlock Text="Can't reach the battery service"
+                           Style="{ThemeResource BodyStrongTextBlockStyle}"
+                           HorizontalAlignment="Center" />
+                <TextBlock Text="{x:Bind ViewModel.ErrorText, Mode=OneWay}"
+                           Style="{StaticResource CaptionSecondaryTextBlockStyle}"
+                           TextWrapping="Wrap"
+                           TextAlignment="Center"
+                           MaxWidth="360" />
+                <Button Content="Try again"
+                        HorizontalAlignment="Center"
+                        Click="TryAgain_Click" />
+            </StackPanel>
+
+            <!-- Non-blocking refresh error when cached/last data is on screen -->
+            <InfoBar x:Name="RefreshInfoBar"
+                     Severity="Error"
+                     IsClosable="True"
+                     Closed="RefreshInfoBar_Closed" />
+        </StackPanel>
+    </ScrollViewer>
+</Page>
