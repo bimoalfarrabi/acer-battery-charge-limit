@@ -19,6 +19,9 @@ public sealed class Snapshot
     [JsonPropertyName("battery")]
     public BatteryInfo? Battery { get; set; }
 
+    [JsonPropertyName("gpu")]
+    public GpuInfo? Gpu { get; set; }
+
     [JsonPropertyName("restoreLog")]
     public List<RestoreLogEntry>? RestoreLog { get; set; }
 
@@ -63,6 +66,30 @@ public sealed class BatteryInfo
 
     [JsonPropertyName("estimatedMinutes")]
     public int? EstimatedMinutes { get; set; }
+}
+
+public sealed class GpuInfo
+{
+    [JsonPropertyName("present")]
+    public bool? Present { get; set; }
+
+    [JsonPropertyName("name")]
+    public string? Name { get; set; }
+
+    [JsonPropertyName("enabled")]
+    public bool? Enabled { get; set; }
+
+    [JsonPropertyName("instanceId")]
+    public string? InstanceId { get; set; }
+
+    [JsonPropertyName("drivingDisplay")]
+    public bool? DrivingDisplay { get; set; }
+
+    [JsonPropertyName("problemCode")]
+    public int? ProblemCode { get; set; }
+
+    [JsonPropertyName("error")]
+    public string? Error { get; set; }
 }
 
 public sealed class RestoreLogEntry

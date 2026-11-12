@@ -16,8 +16,8 @@ C:\ProgramData\battctl\mailbox\   <-- nonce-scoped mailbox
 root\WMI:BatteryControl + root\WMI:Battery* telemetry
 ```
 
-The CLI (`battctl.ps1` / `battctl.cmd`) stays byte-compatible. The UI adds one
-new worker command and does not change any existing one.
+The CLI (`battctl.ps1` / `battctl.cmd`) stays byte-compatible. The UI adds the
+`snapshot` and `gpu:*` worker commands and does not change any existing one.
 
 ## Mailbox protocol (v2, backward compatible)
 
@@ -28,7 +28,8 @@ new worker command and does not change any existing one.
 ```
 
 `nonce` matches `^[0-9A-Za-z]{4,64}$`. `command` is one of
-`status`, `on`, `off`, `toggle`, `restore`, `snapshot`.
+`status`, `on`, `off`, `toggle`, `restore`, `snapshot`,
+`gpu:status`, `gpu:on`, `gpu:off`.
 
 `result.txt` — UTF-8, no BOM, line-oriented:
 
@@ -45,9 +46,10 @@ Exit codes are unchanged from v1:
 |------|---------|
 | 0 | success |
 | 1 | WMI / provider failure |
-| 2 | `BatteryControl` instance absent (firmware has no charge limit) |
+| 2 | `BatteryControl` instance absent (firmware has no charge limit); no NVIDIA dGPU found (`gpu:*`) |
 | 3 | front end timed out waiting for the task |
 | 4 | bad request / mailbox or task missing |
+| 5 | refused by a GPU safety guard (`gpu:off` while the GPU drives a display, or with no other live adapter) |
 
 ### `snapshot` payload
 
@@ -56,7 +58,7 @@ The UI parses line 2 and ignores the rest. Shape:
 
 ```json
 {
-  "schema": 2,
+  "schema": 3,
   "limitOn": true,
   "desired": true,
   "supported": true,
@@ -74,12 +76,35 @@ The UI parses line 2 and ignores the rest. Shape:
     "remainingCapacityMWh": 39120,
     "estimatedMinutes": null
   },
+  "gpu": {
+    "present": true,
+    "name": "NVIDIA GeForce RTX 3060 Laptop GPU",
+    "enabled": true,
+    "instanceId": "PCI\\VEN_10DE&DEV_2520&SUBSYS_153A1025&REV_A1\\4&27C18CFB&0&0008",
+    "drivingDisplay": false,
+    "problemCode": 0,
+    "error": null
+  },
   "restoreLog": [
     { "at": "2026-10-30T07:03:06", "message": "restored desired state: ON  (charge limited to 80%)" }
   ],
   "installedAt": "2026-10-16T08:40:00"
 }
 ```
+
+The `gpu` object is always present with all seven keys; `null` means unknown.
+It is populated independently of `BatteryControl`, so it carries real data even
+in the degraded (`supported: false`, exit 2) snapshot: GPU state comes from PnP
+and `Win32_VideoController`, not from the Acer provider.
+
+`gpu:status` / `gpu:on` / `gpu:off` enable or disable the dedicated GPU
+(`PCI\VEN_10DE&DEV_*`, Display class) with `Enable-PnpDevice` /
+`Disable-PnpDevice`. Windows persists the PnP state across reboots, so there is
+**no GPU restore at boot and no desired-state file for the GPU**: a blind
+boot-time disable is the one scenario that can leave the user with no screen,
+and the charge-limit restore must never gain that failure mode. `gpu:off` is
+refused (exit 5) when the NVIDIA adapter is driving a display or when no other
+adapter is; `gpu:on` never refuses.
 
 ### Verified telemetry sources (2026-10-30, Acer Nitro AN515-57, AP18E8M)
 
@@ -124,7 +149,8 @@ Expected snapshot on this machine right now: `limitOn: true`, `desired: true`,
 `supported: true`, `battery.percent: 79`, `battery.state: "NotCharging"`,
 `battery.powerOnline: true`, `designCapacityMWh: 57488`, `fullChargeCapacityMWh: 47463`,
 `wearPercent: 17.4`, `cycleCount: 44`, `voltageMv: 16337`, `rateMw: null`,
-`estimatedMinutes: null`.
+`estimatedMinutes: null`, `gpu.present: true`, `gpu.enabled: true`,
+`gpu.drivingDisplay: false`, `gpu.problemCode: 0`.
 
 ### Protocol rules
 
@@ -144,6 +170,9 @@ Rules the worker must honour:
   and exit `2` — the UI shows a "not supported" state rather than a crash.
 - Writes (`on`, `off`, `toggle`) additionally refresh `desired.txt` and, for
   `snapshot`, must be side-effect free: `snapshot` never writes the EC.
+- GPU writes (`gpu:on`, `gpu:off`) never touch `desired.txt` or the EC. Windows
+  persists the PnP device state itself, so there is no GPU desired-state file and
+  no boot/resume GPU restore.
 
 ### Concurrency
 

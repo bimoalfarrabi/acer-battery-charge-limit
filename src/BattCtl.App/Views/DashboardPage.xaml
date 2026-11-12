@@ -71,6 +71,66 @@
                     </StackPanel>
                 </Border>
 
+                <!-- Dedicated GPU -->
+                <Border Style="{StaticResource CardBorderStyle}"
+                        Visibility="{x:Bind ViewModel.GpuPresent, Mode=OneWay, Converter={StaticResource BoolToVisibilityConverter}}">
+                    <StackPanel Spacing="10">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Grid.Column="0" Padding="0,0,16,0">
+                                <TextBlock Text="Dedicated GPU"
+                                           Style="{ThemeResource BodyStrongTextBlockStyle}" />
+                                <TextBlock x:Name="GpuState"
+                                           Style="{StaticResource CaptionSecondaryTextBlockStyle}"
+                                           TextWrapping="Wrap"
+                                           AutomationProperties.LiveSetting="Polite" />
+                                <TextBlock Style="{StaticResource CaptionSecondaryTextBlockStyle}"
+                                           TextWrapping="Wrap"
+                                           Text="Turn it off to save battery. Apps run on the slower Intel GPU, and anything that requires the dedicated GPU stops working." />
+                            </StackPanel>
+                            <StackPanel Grid.Column="1"
+                                        Orientation="Horizontal"
+                                        HorizontalAlignment="Right"
+                                        VerticalAlignment="Center"
+                                        Spacing="10">
+                                <ProgressRing Width="16" Height="16"
+                                              IsIndeterminate="True"
+                                              AutomationProperties.Name="Changing GPU state"
+                                              Visibility="{x:Bind ViewModel.IsGpuPending, Mode=OneWay, Converter={StaticResource BoolToVisibilityConverter}}" />
+                                <ToggleSwitch x:Name="GpuSwitch"
+                                              OnContent="On" OffContent="Off"
+                                              AutomationProperties.Name="Dedicated GPU"
+                                              IsOn="{x:Bind ViewModel.GpuDisplayValue, Mode=OneWay}"
+                                              IsEnabled="{x:Bind ViewModel.GpuToggleEnabled, Mode=OneWay}"
+                                              Toggled="GpuSwitch_Toggled" />
+                            </StackPanel>
+                        </Grid>
+                        <Button Content="Check again"
+                                HorizontalAlignment="Left"
+                                Click="GpuRefresh_Click"
+                                Visibility="{x:Bind ViewModel.ShowGpuRetry, Mode=OneWay, Converter={StaticResource BoolToVisibilityConverter}}" />
+                        <InfoBar x:Name="GpuInfoBar"
+                                 IsClosable="True"
+                                 Closed="GpuInfoBar_Closed">
+                            <InfoBar.Content>
+                                <StackPanel Spacing="8">
+                                    <TextBlock x:Name="GpuInfoBarMessage" TextWrapping="Wrap" />
+                                    <StackPanel x:Name="GpuConfirmButtons"
+                                                Orientation="Horizontal"
+                                                Spacing="8"
+                                                Visibility="Collapsed">
+                                        <Button Content="Turn off GPU" Click="GpuConfirmOff_Click" />
+                                        <Button Content="Keep it on" Click="GpuConfirmCancel_Click" />
+                                    </StackPanel>
+                                </StackPanel>
+                            </InfoBar.Content>
+                        </InfoBar>
+                    </StackPanel>
+                </Border>
+
                 <!-- At a glance -->
                 <Grid ColumnSpacing="12">
                     <Grid.ColumnDefinitions>

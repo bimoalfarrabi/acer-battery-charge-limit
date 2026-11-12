@@ -1,5 +1,6 @@
 param(
-    [ValidateSet('', 'status', 'on', 'off', 'toggle', 'restore', 'snapshot')]
+    [ValidateSet('', 'status', 'on', 'off', 'toggle', 'restore', 'snapshot',
+        'gpu:status', 'gpu:on', 'gpu:off')]
     [string]$Action = ''
 )
 
@@ -15,10 +16,12 @@ param(
       .uFunctionStatus[0] = 1 -> limit ON (80%) | 0 -> limit OFF (100%)
 
     Mailbox (C:\ProgramData\battctl\mailbox):
-        request.txt : "<nonce>|<command>"        command in {status,on,off,toggle}
+        request.txt : "<nonce>|<command>"
+                      command in {status,on,off,toggle,snapshot,gpu:status,gpu:on,gpu:off}
         result.txt  : "<nonce>|<exitcode>" NL <message lines...>
 
-    Exit: 0 ok | 1 wmi/provider failure | 2 feature absent | 4 bad request
+    Exit: 0 ok | 1 wmi/provider failure | 2 feature absent (or no NVIDIA dGPU for gpu:*)
+          | 4 bad request | 5 refused by a GPU safety guard (gpu:* commands)
 #>
 $ErrorActionPreference = 'Stop'
 
@@ -93,6 +96,204 @@ function Get-NullableNumber($Object, [string]$Name) {
 function Get-NullableBoolean($Value) {
     if ($null -eq $Value) { return $null }
     try { return [bool]$Value } catch { return $null }
+}
+
+# ---------------- GPU ---------------------------------------------------------
+# The dedicated GPU is a plain PnP device: disabling it is the supported Windows
+# path and Windows persists the state across reboots. No boot-time re-apply here
+# on purpose: a blind disable at boot is the one scenario that can leave the user
+# with no screen.
+
+function Find-NvidiaGpu {
+    # Throws when the PnpDevice module/cmdlet is unavailable so callers can
+    # distinguish "no GPU" (exit 2) from "cannot enumerate" (exit 1).
+    $device = Get-PnpDevice -Class Display -PresentOnly -ErrorAction Stop |
+        Where-Object { $_.InstanceId -match '^PCI\\VEN_10DE&DEV_' } |
+        Select-Object -First 1
+    return $device
+}
+
+function Get-GpuState {
+    # Seven keys, always emitted; $null means unknown. Never throws: the
+    # snapshot and the UI treat an error key as "state unknown".
+    $state = [ordered]@{
+        present = $false
+        name = $null
+        enabled = $null
+        instanceId = $null
+        drivingDisplay = $null
+        problemCode = $null
+        error = $null
+    }
+    try {
+        try {
+            $device = Find-NvidiaGpu
+        } catch {
+            $state.error = "cannot enumerate PnP display devices: $($_.Exception.Message)"
+            return $state
+        }
+        if ($null -eq $device) { return $state }
+        $state.present = $true
+        $state.name = $device.FriendlyName
+        $state.instanceId = $device.InstanceId
+        $status = $null
+        try { $status = [string]$device.Status } catch { $status = $null }
+        $problem = $null
+        try { $problem = [int]$device.Problem } catch { $problem = $null }
+        $state.problemCode = $problem
+        if ($status -eq 'OK') {
+            $state.enabled = $true
+        } elseif ($problem -eq 22) {
+            $state.enabled = $false
+        }
+        # drivingDisplay: the NVIDIA adapter owns the panel when its
+        # Win32_VideoController reports an active horizontal resolution.
+        $driving = $null
+        try {
+            $controller = Get-WmiObject -Namespace root\cimv2 -Class Win32_VideoController -ErrorAction Stop |
+                Where-Object { $_.PNPDeviceID -eq $device.InstanceId } |
+                Select-Object -First 1
+            if ($null -ne $controller) {
+                $res = Get-NullableNumber $controller 'CurrentHorizontalResolution'
+                $driving = ($null -ne $res -and $res -gt 0)
+            }
+        } catch { $driving = $null }
+        $state.drivingDisplay = $driving
+    } catch {
+        $state.error = $_.Exception.Message
+    }
+    return $state
+}
+
+function Invoke-GpuSet([bool]$enable) {
+    # Named Invoke- rather than Set- on purpose: this is a non-interactive
+    # scheduled-task worker, so there is no ShouldProcess/-Confirm surface to
+    # offer, and the Set- verb would only add a PSScriptAnalyzer warning.
+    try {
+        try {
+            $device = Find-NvidiaGpu
+        } catch {
+            return @{ ok = $false; code = 1; message = ("cannot enumerate PnP display devices: " + $_.Exception.Message) }
+        }
+        if ($null -eq $device) {
+            return @{ ok = $false; code = 2; message = 'no NVIDIA dedicated GPU found.' }
+        }
+        $state = Get-GpuState
+        if ($state.enabled -eq $enable) {
+            $word = if ($enable) { 'already enabled' } else { 'already disabled' }
+            return @{ ok = $true; code = 0; message = "Dedicated GPU: $word -> $($state.name)" }
+        }
+        if ($enable) {
+            Enable-PnpDevice -InstanceId $device.InstanceId -Confirm:$false -ErrorAction Stop
+        } else {
+            Disable-PnpDevice -InstanceId $device.InstanceId -Confirm:$false -ErrorAction Stop
+        }
+        # Verify with a bounded loop; a disable can take a moment to settle.
+        for ($i = 0; $i -lt 10; $i++) {
+            Start-Sleep -Milliseconds 500
+            $check = Get-GpuState
+            if ($check.enabled -eq $enable) {
+                $word = if ($enable) { 'enabled' } else { 'disabled' }
+                return @{ ok = $true; code = 0; message = "Dedicated GPU: $word -> $($state.name)" }
+            }
+        }
+        $state = Get-GpuState
+        $now = if ($state.enabled -eq $true) { 'enabled' } elseif ($state.enabled -eq $false) { 'disabled' } else { 'unknown' }
+        return @{ ok = $false; code = 1; message = "the GPU state did not reach '$(if ($enable) { 'enabled' } else { 'disabled' })' within 5 seconds (now: $now)." }
+    } catch {
+        return @{ ok = $false; code = 1; message = $_.Exception.Message }
+    }
+}
+
+function Get-GpuSnapshotObject {
+    return Get-GpuState
+}
+
+function Invoke-GpuCommand([string]$cmd) {
+    $gpuState = $null
+    if ($cmd -eq 'gpu:status') {
+        $gpuState = Get-GpuState
+        if (-not $gpuState.present) {
+            $missing = 'no NVIDIA dedicated GPU found.'
+            if ($directMode) { Direct-Exit 2 $missing }
+            Say ('ERROR: ' + $missing); Emit $nonce 2
+        }
+        $word = if ($gpuState.enabled -eq $true) { 'enabled' } elseif ($gpuState.enabled -eq $false) { 'disabled' } else { 'unknown' }
+        $line = "Dedicated GPU: $word -> $($gpuState.name)"
+        if ($directMode) { Direct-Exit 0 $line }
+        Say $line
+        Emit $nonce 0
+    }
+
+    if ($cmd -eq 'gpu:on') {
+        $result = Invoke-GpuSet $true
+        if ($result.code -eq 0) {
+            if ($directMode) { Direct-Exit 0 $result.message }
+            Say $result.message
+            Emit $nonce 0
+        }
+        if ($result.code -eq 2) {
+            if ($directMode) { Direct-Exit 2 $result.message }
+            Say ('ERROR: ' + $result.message); Emit $nonce 2
+        }
+        if ($directMode) { Direct-Exit 1 ('ERROR: ' + $result.message) }
+        Say ('ERROR: ' + $result.message); Emit $nonce 1
+    }
+
+    if ($cmd -eq 'gpu:off') {
+        $gpuState = Get-GpuState
+        if (-not $gpuState.present) {
+            if ($directMode) { Direct-Exit 2 'no NVIDIA dedicated GPU found.' }
+            Say 'ERROR: no NVIDIA dedicated GPU found.'; Emit $nonce 2
+        }
+        # G5: already off is a no-op, and must not be refused by the display
+        # guards below (a disabled GPU cannot be driving a screen).
+        if ($gpuState.enabled -eq $false) {
+            $already = "Dedicated GPU: already disabled -> $($gpuState.name)"
+            if ($directMode) { Direct-Exit 0 $already }
+            Say $already; Emit $nonce 0
+        }
+        # G1: disabling the adapter that owns the panel blanks the screen.
+        if ($gpuState.drivingDisplay -eq $true) {
+            $refusal = 'REFUSED: the NVIDIA GPU is driving a display; disabling it would blank that screen.'
+            if ($directMode) { Direct-Exit 5 $refusal }
+            Say $refusal
+            Emit $nonce 5
+        }
+        # G2: with no other live adapter, disabling could leave no display at all.
+        $otherDriving = $false
+        try {
+            $controllers = Get-WmiObject -Namespace root\cimv2 -Class Win32_VideoController -ErrorAction Stop
+            foreach ($controller in $controllers) {
+                if ($controller.PNPDeviceID -eq $gpuState.instanceId) { continue }
+                $res = Get-NullableNumber $controller 'CurrentHorizontalResolution'
+                if ($null -ne $res -and $res -gt 0) { $otherDriving = $true; break }
+            }
+        } catch { $otherDriving = $false }
+        if (-not $otherDriving) {
+            $refusal = 'REFUSED: no other display adapter is driving a screen; disabling the GPU could leave you with no display.'
+            if ($directMode) { Direct-Exit 5 $refusal }
+            Say $refusal
+            Emit $nonce 5
+        }
+        $result = Invoke-GpuSet $false
+        if ($result.code -eq 0) {
+            if ($directMode) { Direct-Exit 0 $result.message }
+            Say $result.message
+            Emit $nonce 0
+        }
+        if ($result.code -eq 2) {
+            if ($directMode) { Direct-Exit 2 $result.message }
+            Say ('ERROR: ' + $result.message); Emit $nonce 2
+        }
+        if ($directMode) { Direct-Exit 1 ('ERROR: ' + $result.message) }
+        Say ('ERROR: ' + $result.message); Emit $nonce 1
+    }
+
+    # Unreachable with the current whitelist. Terminate rather than fall through
+    # to the charge-limit write below.
+    if ($directMode) { Direct-Exit 4 "unknown GPU command: $cmd" }
+    Say "ERROR: unknown GPU command: $cmd"; Emit $nonce 4
 }
 
 function Get-SnapshotRestoreLog {
@@ -259,11 +460,12 @@ function Get-SnapshotJson([bool]$supported) {
         $battery.remainingCapacityMWh = $remainingCapacity
         $battery.estimatedMinutes = $estimatedMinutes
     $snapshot = [ordered]@{
-        schema = 2
+        schema = 3
         limitOn = $limitOn
         desired = $desiredValue
         supported = [bool]$supported
         battery = $battery
+        gpu = (Get-GpuSnapshotObject)
         restoreLog = $restoreEntries
         installedAt = $installedAt
     }
@@ -293,7 +495,8 @@ if ($directMode) {
     $parts = $req.Trim() -split '\|', 2
     if ($parts.Count -ge 1) { $nonce   = $parts[0].Trim() }
     if ($parts.Count -ge 2) { $command = $parts[1].Trim().ToLower() }
-    if ($nonce -notmatch '^[0-9A-Za-z]{4,64}$' -or @('status', 'on', 'off', 'toggle', 'snapshot') -notcontains $command) {
+    if ($nonce -notmatch '^[0-9A-Za-z]{4,64}$' -or
+        @('status', 'on', 'off', 'toggle', 'snapshot', 'gpu:status', 'gpu:on', 'gpu:off') -notcontains $command) {
         Say 'ERROR: malformed request.'
         Emit $nonce 4
     }
@@ -311,24 +514,28 @@ if ($directMode -and $command -eq 'restore') {
 }
 
 # ---------------- WMI --------------------------------------------------------
+# GPU commands never touch BatteryControl: they must work even when the Acer
+# provider is absent or stuck.
 $bc = $null
 $attempts = 1
 if ($directMode -and $command -eq 'restore') { $attempts = 10 }
-for ($attempt = 1; $attempt -le $attempts -and $null -eq $bc; $attempt++) {
-    try { $bc = Get-WmiObject -Namespace root\wmi -Class BatteryControl -ErrorAction Stop } catch { $bc = $null }
-    if ($null -eq $bc -and $attempt -lt $attempts) { Start-Sleep -Seconds 3 }
-}
-if ($null -eq $bc) {
-    if ($command -eq 'snapshot') {
-        $snapshotJson = Get-SnapshotJson $false
-        Write-SnapshotResult $snapshotJson 2
+if ($command -notlike 'gpu:*') {
+    for ($attempt = 1; $attempt -le $attempts -and $null -eq $bc; $attempt++) {
+        try { $bc = Get-WmiObject -Namespace root\wmi -Class BatteryControl -ErrorAction Stop } catch { $bc = $null }
+        if ($null -eq $bc -and $attempt -lt $attempts) { Start-Sleep -Seconds 3 }
     }
-    if ($directMode) {
-        Direct-Exit 2 'root\WMI:BatteryControl instance not found; provider did not become ready.'
-    } else {
-        Say 'ERROR: root\WMI:BatteryControl instance not found.'
-        Say '       This firmware does not expose the charge limit, or the WMI provider is not responding.'
-        Emit $nonce 2
+    if ($null -eq $bc) {
+        if ($command -eq 'snapshot') {
+            $snapshotJson = Get-SnapshotJson $false
+            Write-SnapshotResult $snapshotJson 2
+        }
+        if ($directMode) {
+            Direct-Exit 2 'root\WMI:BatteryControl instance not found; provider did not become ready.'
+        } else {
+            Say 'ERROR: root\WMI:BatteryControl instance not found.'
+            Say '       This firmware does not expose the charge limit, or the WMI provider is not responding.'
+            Emit $nonce 2
+        }
     }
 }
 
@@ -366,6 +573,13 @@ if ($directMode -and $command -eq 'restore') {
         Direct-Exit 1 ('restore mismatch: wanted ' + (Describe $desired) + ', got ' + (Describe $actual))
     }
     Direct-Exit 0 ('restored desired state: ' + (Describe $actual))
+}
+
+# GPU dispatch. Must sit before Read-Limit below: $bc is $null on this path and a
+# fall-through would reach Write-Limit with $target = $null and silently clear
+# the charge limit. Invoke-GpuCommand always terminates via Emit/Direct-Exit.
+if ($command -like 'gpu:*') {
+    Invoke-GpuCommand $command
 }
 
 $before = $null

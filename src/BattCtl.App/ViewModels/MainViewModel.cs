@@ -23,6 +23,9 @@ public sealed class MainViewModel : ObservableObject
     private string? _limitMessage;
     private bool _limitMessageIsError;
     private DateTime _lastUpdated;
+    private bool? _pendingGpuTarget;
+    private string? _gpuMessage;
+    private bool _gpuMessageIsError;
     private bool _reapplyPending;
     private string? _reapplyMessage;
     private bool _reapplySucceeded;
@@ -214,6 +217,130 @@ public sealed class MainViewModel : ObservableObject
         false => "Off (100%)",
         null => "Unknown"
     };
+
+    // ---- GPU --------------------------------------------------------------
+
+    public bool IsGpuPending => _pendingGpuTarget is not null;
+
+    public bool GpuPresent => _snapshot?.Gpu?.Present == true;
+
+    // What the switch shows: the user's optimistic choice while pending,
+    // otherwise the last confirmed state.
+    public bool GpuDisplayValue => _pendingGpuTarget ?? _snapshot?.Gpu?.Enabled ?? false;
+
+    public bool GpuToggleEnabled =>
+        !IsGpuPending && _snapshot?.Gpu?.Present == true &&
+        _snapshot?.Gpu?.Enabled is not null && _snapshot?.Gpu?.DrivingDisplay != true;
+
+    public bool ShowGpuRetry =>
+        GpuPresent && _snapshot?.Gpu?.Enabled is null && _pendingGpuTarget is null;
+
+    public string GpuStateText
+    {
+        get
+        {
+            if (_pendingGpuTarget is bool target)
+            {
+                return target ? "Turning the GPU on\u2026" : "Turning the GPU off\u2026";
+            }
+
+            var gpu = _snapshot?.Gpu;
+            if (gpu is null || gpu.Present != true)
+            {
+                return "State unknown. The worker has not reported the GPU.";
+            }
+
+            if (gpu.Enabled is null)
+            {
+                return "State unknown. The worker could not read the GPU state.";
+            }
+
+            if (gpu.DrivingDisplay == true)
+            {
+                return "On. This GPU is driving a display, so it cannot be turned off.";
+            }
+
+            if (gpu.Enabled == true)
+            {
+                return "On. Available to apps that need it.";
+            }
+
+            return gpu.ProblemCode is int code && code != 22
+                ? $"Off. The device reports a problem (code {code})."
+                : "Off. Apps use the Intel GPU. Screens wired to the GPU stay dark.";
+        }
+    }
+
+    public string? GpuMessage
+    {
+        get => _gpuMessage;
+        private set
+        {
+            if (SetProperty(ref _gpuMessage, value))
+            {
+                RaisePropertyChanged(nameof(HasGpuMessage));
+            }
+        }
+    }
+
+    public bool HasGpuMessage => _gpuMessage is not null;
+
+    public bool GpuMessageIsError
+    {
+        get => _gpuMessageIsError;
+        private set => SetProperty(ref _gpuMessageIsError, value);
+    }
+
+    public void DismissGpuMessage() => GpuMessage = null;
+
+    // A guard refusal is the safety design working, not a failure, so it is a
+    // warning carrying the worker's own words.
+    public async Task RequestGpuChangeAsync(bool target)
+    {
+        if (_pendingGpuTarget is not null || target == _snapshot?.Gpu?.Enabled)
+        {
+            return;
+        }
+
+        _pendingGpuTarget = target;
+        GpuMessage = null;
+        RaiseAllPropertiesChanged();
+
+        try
+        {
+            await _client.SendCommandAsync(target ? "gpu:on" : "gpu:off", _shutdownTokenSource.Token);
+            var snapshot = await _client.GetSnapshotAsync(_shutdownTokenSource.Token);
+            ApplySnapshot(snapshot, persist: true);
+
+            if (snapshot.Gpu?.Enabled == target)
+            {
+                GpuMessage = null;
+            }
+            else
+            {
+                GpuMessageIsError = false;
+                GpuMessage = "The change was sent, but the worker did not confirm it. The switch shows the last confirmed state.";
+            }
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (BattCtlException exception) when (exception.Error == BattCtlError.GpuRefused)
+        {
+            GpuMessageIsError = false;
+            GpuMessage = exception.Message;
+        }
+        catch (BattCtlException exception)
+        {
+            GpuMessageIsError = true;
+            GpuMessage = FriendlyGpuMessage(exception);
+        }
+        finally
+        {
+            _pendingGpuTarget = null;
+            RaiseAllPropertiesChanged();
+        }
+    }
 
     // ---- Settings ---------------------------------------------------------
 
@@ -500,6 +627,21 @@ public sealed class MainViewModel : ObservableObject
             // The deployed worker predates the snapshot command; say so plainly.
             BattCtlError.BadRequest when exception.Message.Contains("malformed", StringComparison.OrdinalIgnoreCase) =>
                 "The installed BattCtl worker is outdated and does not know the snapshot command. Re-run the installer to update it.",
+            _ => exception.Message
+        };
+    }
+
+    private static string FriendlyGpuMessage(BattCtlException exception)
+    {
+        return exception.Error switch
+        {
+            // The battery-specific "Unsupported" text does not fit here.
+            BattCtlError.Unsupported => "No controllable dedicated GPU was found on this machine.",
+            BattCtlError.NotInstalled => "The BattCtl service is not installed on this machine.",
+            BattCtlError.TaskStartFailed => "The BattCtl scheduled task could not be started.",
+            BattCtlError.Timeout => "The BattCtl service did not answer in time.",
+            BattCtlError.ProviderFailure => "The GPU provider returned an error.",
+            BattCtlError.MailboxBusy => "BattCtl is busy with another request; try again in a moment.",
             _ => exception.Message
         };
     }

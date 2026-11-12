@@ -11,7 +11,7 @@ Two front ends ship here:
 
 | | |
 |---|---|
-| `battctl` | command line: `status` / `on` / `off` / `toggle` |
+| `battctl` | command line: `status` / `on` / `off` / `toggle` / `gpu:status` / `gpu:on` / `gpu:off` |
 | **Acer Battery** (`src/BattCtl.App`) | a Fluent WinUI 3 desktop app with a tray icon |
 
 Both talk to the same SYSTEM-scheduled-task worker, so neither can be broken by a hung
@@ -30,7 +30,10 @@ Battery Charge Limit: set -> OFF (charges to 100%)
 A native WinUI 3 app in the Windows 11 Fluent style (Mica backdrop, Segoe UI Variable,
 Fluent card and spacing tokens), built as the replacement for Care Center's battery panel.
 
-- **Dashboard** -- battery percentage, charge state, and the 80% limit switch.
+- **Dashboard** -- battery percentage, charge state, and the 80% limit switch. A
+  separate **Dedicated GPU** card shows the NVIDIA dGPU state with the same
+  optimistic toggle; turning it off asks for an inline confirmation, and the card
+  hides itself when the machine has no dedicated GPU.
 - **Health** -- design vs full-charge capacity, wear, cycle count, voltage, charge rate.
 - **Settings** -- launch at login, re-apply the saved limit, restore log, JSON export.
 - **Tray** -- icon with a quick-toggle menu and a live tooltip.
@@ -114,7 +117,13 @@ battctl status     # show current state          (default)
 battctl on         # enable the 80% charge limit
 battctl off        # disable it (charge to 100%)
 battctl toggle     # flip the current state
+battctl gpu:status # dedicated GPU state
+battctl gpu:on     # enable the NVIDIA dGPU
+battctl gpu:off    # disable the NVIDIA dGPU (refused if it drives a display)
 ```
+
+`battctl gpu:off` refuses with exit `5` when the NVIDIA GPU is driving a display or
+no other adapter is active, so the screen can never go dark from the CLI.
 
 `battctl on` and `battctl off` remember your choice in
 `C:\ProgramData\battctl\desired.txt`. The saved state is re-applied automatically after
@@ -127,9 +136,37 @@ Exit codes:
 |------|---------|
 | `0`  | success |
 | `1`  | WMI/provider failure |
-| `2`  | feature not present on this model (no `BatteryControl` instance) |
+| `2`  | feature not present on this model (no `BatteryControl` instance), or no NVIDIA dGPU found for `gpu:*` |
 | `3`  | timed out waiting for the task (WMI provider stuck -- `schtasks /end /tn BattCtl`), or another battctl request held the mailbox |
 | `4`  | bad argument, or the tool is not installed |
+| `5`  | GPU command refused by a safety guard |
+
+## Dedicated GPU
+
+On an Optimus laptop the NVIDIA GPU can be turned off to save battery. The worker
+disables the display adapter through PnP (`Disable-PnpDevice`), so the Intel iGPU
+keeps driving the built-in panel and the change survives a reboot.
+
+```powershell
+battctl gpu:status   # Dedicated GPU: enabled -> NVIDIA GeForce RTX 3060 Laptop GPU
+battctl gpu:off      # disable the NVIDIA adapter
+battctl gpu:on       # enable it again
+```
+
+Safety rules, enforced by the worker:
+
+- `gpu:off` is refused (exit `5`) when the NVIDIA adapter is driving a display, or
+  when no other adapter is driving one. The screen can never go dark.
+- `gpu:on` is never refused; it is the way back.
+- Already-off / already-on is a no-op (exit `0`).
+- No GPU state is restored at boot. Windows persists the PnP state itself, and a
+  blind boot-time disable is the one case that could leave a machine with no
+  display.
+
+The desktop app shows the same control as a **Dedicated GPU** card on the
+Dashboard. Turning it off asks for an inline confirmation; the card hides itself
+when the machine has no dedicated GPU. Apps using NVIDIA (games, CUDA, video
+encode) lose the device while it is off, and monitors wired to the GPU stay dark.
 
 ## How it works
 
@@ -162,15 +199,19 @@ The worker is pinned to **Windows PowerShell 5.1** (`powershell.exe`), because
 
 ### The snapshot command
 
-Besides `status`/`on`/`off`/`toggle`, the worker accepts an internal `snapshot` command that
-returns one line of JSON with the charge-limit state plus battery telemetry:
+Besides `status`/`on`/`off`/`toggle` and the `gpu:*` commands, the worker accepts an
+internal `snapshot` command that returns one line of JSON with the charge-limit state,
+battery telemetry, and dedicated-GPU state:
 
 ```json
-{"schema":2,"limitOn":true,"desired":true,"supported":true,
+{"schema":3,"limitOn":true,"desired":true,"supported":true,
  "battery":{"present":true,"percent":79,"state":"NotCharging","powerOnline":true,
             "designCapacityMWh":57488,"fullChargeCapacityMWh":47463,"wearPercent":17.4,
             "cycleCount":44,"voltageMv":16337,"rateMw":null,
             "remainingCapacityMWh":37745,"estimatedMinutes":null},
+ "gpu":{"present":true,"name":"NVIDIA GeForce RTX 3060 Laptop GPU","enabled":true,
+        "instanceId":"PCI\\VEN_10DE&DEV_2520&SUBSYS_153A1025&REV_A1\\4&27C18CFB&0&0008",
+        "drivingDisplay":false,"problemCode":0,"error":null},
  "restoreLog":[...],"installedAt":"2026-10-15T08:24:20"}
 ```
 

@@ -52,9 +52,9 @@ public sealed class BattCtlClient
 
     public async Task<BattCtlResult> SendCommandAsync(string command, CancellationToken cancellationToken)
     {
-        if (command is not ("on" or "off" or "toggle" or "status"))
+        if (command is not ("on" or "off" or "toggle" or "status" or "gpu:status" or "gpu:on" or "gpu:off"))
         {
-            throw new ArgumentOutOfRangeException(nameof(command), command, "Command must be on, off, toggle, or status.");
+            throw new ArgumentOutOfRangeException(nameof(command), command, "Command must be on, off, toggle, status, gpu:status, gpu:on, or gpu:off.");
         }
 
         var result = await ExecuteAsync(command, cancellationToken, allowSnapshotDegraded: false).ConfigureAwait(false);
@@ -279,6 +279,7 @@ public sealed class BattCtlClient
             2 => BattCtlError.Unsupported,
             3 => BattCtlError.Timeout,
             4 => BattCtlError.BadRequest,
+            5 => BattCtlError.GpuRefused,
             _ => BattCtlError.BadRequest
         };
 
@@ -298,6 +299,7 @@ public enum BattCtlError
     Unsupported,
     ProviderFailure,
     BadRequest,
+    GpuRefused,
     MailboxBusy
 }
 

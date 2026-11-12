@@ -3,7 +3,7 @@
     Drops a nonce-tagged request in the mailbox, fires the "BattCtl" scheduled
     task (runs as SYSTEM), waits for the matching result and prints it.
 
-    Exit codes:  0 ok | worker's own code | 3 task timeout | 4 mailbox/task missing
+    Exit codes:  0 ok | worker's own code | 3 task timeout | 4 mailbox/task missing | 5 refused
 #>
 [CmdletBinding()]
 param(
@@ -12,9 +12,9 @@ param(
 )
 
 $Command = "$Command".ToLowerInvariant()
-if (@('status', 'on', 'off', 'toggle') -notcontains $Command) {
+if (@('status', 'on', 'off', 'toggle', 'gpu:status', 'gpu:on', 'gpu:off') -notcontains $Command) {
     [Console]::Error.WriteLine("battctl: unknown command '$Command'.")
-    [Console]::Error.WriteLine('usage: battctl [status|on|off|toggle]')
+    [Console]::Error.WriteLine('usage: battctl [status|on|off|toggle|gpu:status|gpu:on|gpu:off]')
     exit 4
 }
 
