@@ -35,8 +35,11 @@ Fluent card and spacing tokens), built as the replacement for Care Center's batt
   optimistic toggle; turning it off asks for an inline confirmation, and the card
   hides itself when the machine has no dedicated GPU.
 - **Health** -- design vs full-charge capacity, wear, cycle count, voltage, charge rate.
-- **Settings** -- launch at login, re-apply the saved limit, restore log, JSON export.
-- **Tray** -- icon with a quick-toggle menu and a live tooltip.
+- **Settings** -- launch at login, re-apply the saved limit, restore log, JSON export,
+  and the GitHub update check.
+- **Tray** -- icon with a quick-toggle menu and a live tooltip. The same battery mark is
+  used for the window/taskbar icon, the title bar, the Start Menu shortcut, and the
+  installer.
 
 It reads battery telemetry even when the firmware charge-limit interface is unreachable, and
 it degrades honestly instead of guessing: an unknown limit state is shown as unknown, never
@@ -46,7 +49,7 @@ Every worker round trip costs about a second, so the app paints the last known r
 immediately, updates in the background, and moves the switch optimistically before the
 firmware confirms it.
 
-Install the CLI first, then the app:
+To install from a source checkout, install the CLI first, then the app:
 
 ```powershell
 .\battctl-install.cmd     # CLI + worker + scheduled tasks
@@ -83,12 +86,18 @@ makes the app exit silently or open an unstyled window.
 ## Requirements
 
 - Windows 10/11, an Acer laptop whose firmware exposes the WMI charge-limit interface
-- Administrator rights **only for the one-time install** (afterwards: no UAC prompts)
+- Administrator rights for the one-time install, and for each app update (the installer is
+  per-machine; the in-app updater triggers one UAC prompt)
 
 Verified on **Acer Nitro AN515-57** (BIOS V1.22). Likely works on many modern Acer
 Aspire / Swift / Nitro / Predator models -- see [Supported models](#supported-models).
 
 ## Install
+
+For a normal desktop install, download `BattCtl-Setup-<version>.exe` from
+[Releases](https://github.com/bimoalfarrabi/acer-battery-charge-limit/releases) and run it
+(one UAC prompt) -- see [Installer](#installer). The clone-and-run steps below are for a
+source checkout, CLI-only use, or development.
 
 Clone (or download) this repo, then run the installer once:
 
@@ -98,7 +107,7 @@ cd acer-battery-charge-limit
 .\battctl-install.cmd        # one UAC prompt
 ```
 
-The installer:
+The CLI setup script:
 
 - copies the worker and front end to `C:\Program Files\battctl\` (the worker is admin-only, so `SYSTEM` can run it safely),
 - creates the mailbox `C:\ProgramData\battctl\mailbox\` and grants *you* modify access,
@@ -107,8 +116,9 @@ The installer:
 - adds `C:\Program Files\battctl` to the system `PATH`.
 
 After installation, `battctl` is available in any **new** terminal (already-open shells keep the old
-`PATH`). To update after `git pull`, re-run `.\battctl-install.cmd`. To run `battctl` from **WSL**,
-see [WSL usage](#wsl-usage).
+`PATH`). To update a source checkout after `git pull`, re-run `.\battctl-install.cmd` (or
+use the GUI installer / in-app updater). To run `battctl` from **WSL**, see
+[WSL usage](#wsl-usage).
 
 ## Installer
 
@@ -145,16 +155,28 @@ self-contained, builds the installer with Inno Setup 6.7+, and attaches the setu
 exe, a portable zip of the publish output, and `SHA256SUMS.txt` to the GitHub Release.
 A release can also be triggered manually from the Actions tab (`workflow_dispatch`)
 with a version input. To build the installer locally: `.\build-installer.ps1`
-(needs Inno Setup 6.7.0).
+(needs Inno Setup 6.7+).
 
 ## Updates
 
 Once at startup (and via a manual **Check for updates** button in Settings), the
 desktop app asks GitHub Releases whether a newer version exists. If one does, it
-downloads the `BattCtl-Setup-<version>.exe` asset, verifies its SHA-256 against the
-release, and runs it after a UAC prompt; the installer relaunches the app when done.
-Auto-check can be turned off in Settings → Updates, and nothing is downloaded without
-your click. No telemetry beyond the update check itself.
+downloads the `BattCtl-Setup-<version>.exe` asset to
+`%LOCALAPPDATA%\BattCtl.App\updates`, verifies its SHA-256 against the release, and
+runs it after a UAC prompt; the installer relaunches the app when done. Auto-check
+can be turned off in Settings → Updates, and nothing is downloaded without your
+click. No telemetry beyond the update check itself.
+
+Each download uses its own temporary `.part` file, so a failed or cancelled attempt
+cannot block the next one. If Windows still reports that a `.part` file is in use,
+quit Acer Battery from the tray, delete the partial downloads, and retry:
+
+```powershell
+Remove-Item "$env:LOCALAPPDATA\BattCtl.App\updates\*.part" -Force
+```
+
+If the in-app updater cannot run (for example, an older build), install the new
+`BattCtl-Setup-<version>.exe` manually after quitting the app.
 
 ## Usage
 
