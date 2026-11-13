@@ -19,6 +19,16 @@
                               Visibility="{x:Bind ViewModel.IsRefreshing, Mode=OneWay, Converter={StaticResource BoolToVisibilityConverter}}" />
             </Grid>
 
+            <!-- Update available: points at Settings, no install here -->
+            <InfoBar x:Name="UpdateAvailableBar"
+                     Severity="Informational"
+                     IsClosable="True"
+                     Closed="UpdateAvailableBar_Closed">
+                <InfoBar.Content>
+                    <Button Content="View in Settings" Click="ViewInSettings_Click" />
+                </InfoBar.Content>
+            </InfoBar>
+
             <!-- Content -->
             <StackPanel Spacing="20"
                         Visibility="{x:Bind ViewModel.ShowContent, Mode=OneWay, Converter={StaticResource BoolToVisibilityConverter}}">

@@ -1,3 +1,4 @@
+using BattCtl.App.Services;
 using BattCtl.App.ViewModels;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
@@ -10,6 +11,7 @@ public sealed partial class DashboardPage : Page
     private Storyboard? _skeletonPulse;
     private bool _suppressGpuToggle;
     private bool _gpuConfirmOpen;
+    private string? _dismissedUpdateVersion;
 
     public DashboardPage()
     {
@@ -24,16 +26,50 @@ public sealed partial class DashboardPage : Page
     {
         ViewModel.ValuesUpdated += UpdateValues;
         ViewModel.PropertyChanged += OnViewModelPropertyChanged;
+        App.UpdateService.PropertyChanged += OnUpdateServicePropertyChanged;
         UpdateValues();
         SyncInfoBars();
         SyncSkeleton();
+        SyncUpdateBar();
     }
 
     private void OnUnloaded(object sender, RoutedEventArgs e)
     {
         ViewModel.ValuesUpdated -= UpdateValues;
         ViewModel.PropertyChanged -= OnViewModelPropertyChanged;
+        App.UpdateService.PropertyChanged -= OnUpdateServicePropertyChanged;
         _skeletonPulse?.Stop();
+    }
+
+    private void OnUpdateServicePropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName is "" or nameof(UpdateService.State) or nameof(UpdateService.LatestVersion))
+        {
+            DispatcherQueue.TryEnqueue(SyncUpdateBar);
+        }
+    }
+
+    private void SyncUpdateBar()
+    {
+        var version = App.UpdateService.LatestVersion;
+        var available = App.UpdateService.IsUpdateAvailable && version != _dismissedUpdateVersion;
+        if (available)
+        {
+            UpdateAvailableBar.Message = $"Version {version} is available.";
+        }
+
+        UpdateAvailableBar.IsOpen = available;
+    }
+
+    private void UpdateAvailableBar_Closed(InfoBar sender, InfoBarClosedEventArgs args)
+    {
+        _dismissedUpdateVersion = App.UpdateService.LatestVersion;
+        UpdateAvailableBar.IsOpen = false;
+    }
+
+    private void ViewInSettings_Click(object sender, RoutedEventArgs e)
+    {
+        App.MainWindow?.NavigateTo(typeof(SettingsPage));
     }
 
     private void UpdateValues()

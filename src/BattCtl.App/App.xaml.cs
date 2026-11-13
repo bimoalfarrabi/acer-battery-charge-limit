@@ -10,6 +10,7 @@ public partial class App : Application
 {
     public static MainWindow? MainWindow { get; private set; }
     public static MainViewModel ViewModel { get; private set; } = null!;
+    public static UpdateService UpdateService { get; private set; } = null!;
 
     private TrayService? _tray;
 
@@ -33,6 +34,7 @@ public partial class App : Application
     protected override void OnLaunched(LaunchActivatedEventArgs args)
     {
         ViewModel = new MainViewModel(new BattCtlClient(), new SnapshotCache());
+        UpdateService = new UpdateService();
 
         // Tray icon is created after the main window exists: ForceCreate()
         // spins up message-host infrastructure that is happier once the app's
@@ -74,6 +76,13 @@ public partial class App : Application
             MainWindow?.DispatcherQueue.TryEnqueue(ShowMainWindow);
 
         _ = ViewModel.InitializeAsync();
+
+        // One silent update check per launch, fire-and-forget: never block
+        // first paint on the network.
+        if (UpdateService.AutoCheckEnabled)
+        {
+            _ = UpdateService.CheckForUpdatesAsync(manual: false, ViewModel.ShutdownToken);
+        }
     }
 
     public void ShowMainWindow()
@@ -87,7 +96,7 @@ public partial class App : Application
         MainWindow.Activate();
     }
 
-    private void Quit()
+    public void Quit()
     {
         ViewModel.Shutdown();
         _tray?.Dispose();

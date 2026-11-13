@@ -11,6 +11,7 @@ namespace BattCtl.App;
 public static class Program
 {
     private static IntPtr _redirectEventHandle;
+    private static Mutex? _appMutex;
 
     [global::System.STAThread]
     private static int Main(string[] args)
@@ -20,6 +21,10 @@ public static class Program
         {
             return 0;
         }
+
+        // Inno Setup's AppMutex checks this. Held for the process lifetime; the
+        // OS releases it on exit, including Environment.Exit in App.Quit.
+        _appMutex = new Mutex(initiallyOwned: true, name: "BattCtl.App.Running", out _);
 
         Application.Start(p =>
         {

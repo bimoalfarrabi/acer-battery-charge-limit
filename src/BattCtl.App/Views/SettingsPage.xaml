@@ -104,12 +104,50 @@
                 </StackPanel>
             </Border>
 
+            <!-- Updates -->
+            <Border Style="{StaticResource CardBorderStyle}">
+                <StackPanel Spacing="10">
+                    <TextBlock Text="Updates" Style="{ThemeResource BodyStrongTextBlockStyle}" />
+                    <TextBlock Text="Checks GitHub for new versions. Runs automatically once at startup."
+                               Style="{StaticResource CaptionSecondaryTextBlockStyle}"
+                               TextWrapping="Wrap" />
+                    <StackPanel Orientation="Horizontal" Spacing="10">
+                        <Button x:Name="UpdateButton"
+                                Content="Check for updates"
+                                Click="UpdateButton_Click" />
+                        <ProgressRing Width="16" Height="16"
+                                      VerticalAlignment="Center"
+                                      IsIndeterminate="True"
+                                      Visibility="{x:Bind Updates.IsChecking, Mode=OneWay, Converter={StaticResource BoolToVisibilityConverter}}" />
+                    </StackPanel>
+                    <TextBlock x:Name="UpdateStatusLine"
+                               Text="Last checked: —"
+                               Style="{StaticResource CaptionSecondaryTextBlockStyle}"
+                               TextWrapping="Wrap" />
+                    <ToggleSwitch x:Name="AutoCheckSwitch"
+                                  Header="Auto-check for updates at startup"
+                                  OnContent="On" OffContent="Off"
+                                  Toggled="AutoCheckSwitch_Toggled" />
+                    <InfoBar x:Name="UpdateInfoBar"
+                             IsClosable="True"
+                             Closed="UpdateInfoBar_Closed">
+                        <InfoBar.Content>
+                            <ScrollViewer MaxHeight="160">
+                                <TextBlock x:Name="UpdateNotesText"
+                                           TextWrapping="Wrap"
+                                           Style="{ThemeResource CaptionTextBlockStyle}" />
+                            </ScrollViewer>
+                        </InfoBar.Content>
+                    </InfoBar>
+                </StackPanel>
+            </Border>
+
             <!-- About -->
             <Border Style="{StaticResource CardBorderStyle}">
                 <StackPanel Spacing="4">
                     <TextBlock Text="BattCtl" Style="{ThemeResource BodyStrongTextBlockStyle}" />
                     <TextBlock x:Name="VersionText" Style="{StaticResource CaptionSecondaryTextBlockStyle}" />
-                    <TextBlock Text="Battery charge limit and status for this laptop. Everything runs locally through the BattCtl service; no data leaves the machine."
+                    <TextBlock Text="Battery charge limit and status for this laptop. Everything runs locally. The only network request is an update check to GitHub Releases, which you can turn off in Updates."
                                Style="{StaticResource CaptionSecondaryTextBlockStyle}"
                                TextWrapping="Wrap" />
                 </StackPanel>

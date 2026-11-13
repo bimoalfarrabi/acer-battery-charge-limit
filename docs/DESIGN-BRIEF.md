@@ -111,4 +111,7 @@ Read `docs/winui3-research.md` for detail; these are settled, do not re-litigate
 
 - No fan/performance controls. No WMI surface is verified for them and
   guessing at NitroSense internals is how machines get bricked.
-- No telemetry, no network, no accounts.
+- No telemetry, no accounts, and no network except one thing: an opt-out
+  update check to GitHub Releases, which sends the app version and carries
+  nothing else beyond what TLS to github.com inherently exposes (the
+  machine's IP). Everything else stays on the machine.

@@ -110,6 +110,52 @@ After installation, `battctl` is available in any **new** terminal (already-open
 `PATH`). To update after `git pull`, re-run `.\battctl-install.cmd`. To run `battctl` from **WSL**,
 see [WSL usage](#wsl-usage).
 
+## Installer
+
+A Windows installer built with Inno Setup ships on each
+[GitHub Release](https://github.com/bimoalfarrabi/acer-battery-charge-limit/releases):
+`BattCtl-Setup-<version>.exe` installs the desktop app, the worker/CLI, the scheduled
+tasks, the machine `PATH` entry and the Start Menu shortcut in one step, per-machine
+(one UAC prompt). Your settings and logs (`C:\ProgramData\battctl`,
+`%LOCALAPPDATA%\BattCtl.App`) survive upgrades and are kept on uninstall unless you
+answer **Yes** to the "Also remove your settings and logs?" prompt.
+
+The desktop app can update itself: it downloads `BattCtl-Setup-<version>.exe` from the
+release, verifies its SHA-256, and runs it silently after a UAC prompt -- the installer
+then relaunches the app. See [Updates](#updates).
+
+Silent install / upgrade (what the app's updater uses):
+
+```text
+BattCtl-Setup-<version>.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP-
+```
+
+The installer refuses to run while the app is running -- quit it from the tray menu
+first. Uninstall from Windows "Installed apps" ("Acer Battery").
+
+The binaries are not code-signed yet, so SmartScreen may warn on first run. Verify the
+download against `SHA256SUMS.txt` on the release page (`certutil -hashfile
+BattCtl-Setup-<version>.exe SHA256`).
+
+## Releases
+
+Tagging `vX.Y.Z` (semver; a tag with a prerelease suffix like `v1.2.0-rc.1` publishes a
+prerelease) triggers `.github/workflows/release.yml`, which publishes the app
+self-contained, builds the installer with Inno Setup 6.7.0, and attaches the setup
+exe, a portable zip of the publish output, and `SHA256SUMS.txt` to the GitHub Release.
+A release can also be triggered manually from the Actions tab (`workflow_dispatch`)
+with a version input. To build the installer locally: `.\build-installer.ps1`
+(needs Inno Setup 6.7.0).
+
+## Updates
+
+Once at startup (and via a manual **Check for updates** button in Settings), the
+desktop app asks GitHub Releases whether a newer version exists. If one does, it
+downloads the `BattCtl-Setup-<version>.exe` asset, verifies its SHA-256 against the
+release, and runs it after a UAC prompt; the installer relaunches the app when done.
+Auto-check can be turned off in Settings → Updates, and nothing is downloaded without
+your click. No telemetry beyond the update check itself.
+
 ## Usage
 
 ```powershell
@@ -279,9 +325,12 @@ battctl-worker.ps1     worker, runs as SYSTEM via the BattCtl task
 battctl-install.*      one-time CLI/worker/task setup
 install-ui.ps1         desktop app install (+ refreshes worker and CLI)
 build.ps1, run.ps1     source build wrappers (WSL UNC safe)
+build-installer.ps1    publish + Inno Setup installer build
+installer/             BattCtl.iss, provision/unprovision scripts
 src/BattCtl.App/       WinUI 3 app: Views, ViewModels, Services, Styles, Assets
 docs/                  UI architecture contract, design brief, WinUI 3 research
-.github/workflows/     lint.yml (PowerShell lint), build-app.yml (WinUI build)
+.github/workflows/     lint.yml (PowerShell lint), build-app.yml (WinUI build),
+                       release.yml (tag-driven release with installer + checksums)
 ```
 
 ## Design notes

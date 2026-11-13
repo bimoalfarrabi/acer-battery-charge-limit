@@ -14,6 +14,7 @@ namespace BattCtl.App;
 public sealed partial class MainWindow : Window
 {
     private readonly DispatcherQueueTimer _refreshTimer;
+    private bool _navigating;
 
     public MainWindow()
     {
@@ -135,9 +136,37 @@ public sealed partial class MainWindow : Window
             _ => null
         };
 
-        if (pageType is not null && ContentFrame.CurrentSourcePageType != pageType)
+        NavigateTo(pageType);
+    }
+
+    internal void NavigateTo(System.Type? pageType)
+    {
+        if (pageType is null || ContentFrame.CurrentSourcePageType == pageType || _navigating)
         {
-            ContentFrame.Navigate(pageType);
+            return;
+        }
+
+        _navigating = true;
+        try
+        {
+            var item = pageType == typeof(SettingsPage) ? NavigationViewControl.MenuItems[2]
+                : pageType == typeof(HealthPage) ? NavigationViewControl.MenuItems[1]
+                : (object)DashboardItem;
+            if (!ReferenceEquals(NavigationViewControl.SelectedItem, item))
+            {
+                // Setting SelectedItem raises SelectionChanged, which re-enters
+                // this method; the _navigating guard stops the second navigation.
+                NavigationViewControl.SelectedItem = item;
+            }
+
+            if (ContentFrame.CurrentSourcePageType != pageType)
+            {
+                ContentFrame.Navigate(pageType);
+            }
+        }
+        finally
+        {
+            _navigating = false;
         }
     }
 }

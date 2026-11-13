@@ -1,0 +1,120 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to publish (semver, without the v prefix)'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up .NET 9
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '9.0.x'
+
+      - name: Resolve version
+        id: version
+        shell: pwsh
+        run: |
+          if ($env:GITHUB_EVENT_NAME -eq 'workflow_dispatch') {
+            $version = '${{ inputs.version }}'
+          } else {
+            $version = $env:GITHUB_REF_NAME -replace '^v', ''
+          }
+          if ($version -notmatch '^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$') {
+            Write-Error "Not a semver version: '$version'. Tags must be vX.Y.Z or vX.Y.Z-prerelease."
+            exit 1
+          }
+          "version=$version" >> $env:GITHUB_OUTPUT
+          Write-Output "Publishing version $version"
+
+      - name: Restore
+        run: dotnet restore src/BattCtl.App/BattCtl.App.csproj -p:Platform=x64
+
+      # One explicit --artifacts-path under RUNNER_TEMP; do not rely on LOCALAPPDATA.
+      - name: Publish app
+        run: >
+          dotnet publish src/BattCtl.App/BattCtl.App.csproj -c Release -p:Platform=x64
+          -p:Version=${{ steps.version.outputs.version }}
+          -p:WindowsAppSDKSelfContained=true -p:SelfContained=true -p:PublishTrimmed=false
+          --artifacts-path "${{ runner.temp }}\artifacts"
+
+      # A missing resources.pri makes the app exit silently or open an unstyled
+      # window, and it is the first thing to break when a build step changes.
+      # Fail the build instead of shipping that.
+      - name: Verify app payload
+        shell: pwsh
+        run: |
+          $out = Join-Path '${{ runner.temp }}\artifacts' 'publish\BattCtl.App\release_win-x64'
+          $required = @('BattCtl.App.exe', 'BattCtl.App.dll', 'resources.pri', 'Microsoft.WinUI.dll')
+          $missing = @($required | Where-Object { -not (Test-Path (Join-Path $out $_)) })
+          if ($missing.Count -gt 0) {
+            Write-Error "Missing from publish output: $($missing -join ', ')"
+            exit 1
+          }
+          Write-Output "Publish output verified: $($required -join ', ')"
+
+      - name: Install Inno Setup 6.7.0
+        shell: pwsh
+        run: choco install innosetup --version=6.7.0 -y --no-progress
+
+      - name: Build installer
+        shell: pwsh
+        run: |
+          $iscc = 'C:\Program Files (x86)\Inno Setup 6\ISCC.exe'
+          $publish = Join-Path '${{ runner.temp }}\artifacts' 'publish\BattCtl.App\release_win-x64'
+          & $iscc "/DMyAppVersion=${{ steps.version.outputs.version }}" "/DPublishDir=$publish" installer\BattCtl.iss
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Build portable zip and SHA256SUMS.txt
+        shell: pwsh
+        run: |
+          $version = '${{ steps.version.outputs.version }}'
+          $publish = Join-Path '${{ runner.temp }}\artifacts' 'publish\BattCtl.App\release_win-x64'
+          $staging = '${{ runner.temp }}\release'
+          New-Item -ItemType Directory -Force -Path $staging | Out-Null
+
+          Copy-Item 'installer\output\BattCtl-Setup-*.exe' $staging
+          $zip = Join-Path $staging "BattCtl-Portable-$version.zip"
+          Compress-Archive -Path (Join-Path $publish '*') -DestinationPath $zip -Force
+
+          $sums = Join-Path $staging 'SHA256SUMS.txt'
+          $lines = Get-ChildItem (Join-Path $staging '*.exe'), $zip | ForEach-Object {
+            $hash = (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower()
+            "$hash  $($_.Name)"
+          }
+          Set-Content -Path $sums -Value $lines -Encoding ascii
+
+          Get-ChildItem $staging | Select-Object Name, Length
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ steps.version.outputs.version }}
+          path: ${{ runner.temp }}\release\*
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: v${{ steps.version.outputs.version }}
+          name: v${{ steps.version.outputs.version }}
+          files: |
+            ${{ runner.temp }}\release\BattCtl-Setup-*.exe
+            ${{ runner.temp }}\release\BattCtl-Portable-*.zip
+            ${{ runner.temp }}\release\SHA256SUMS.txt
+          generate_release_notes: true
+          prerelease: ${{ contains(steps.version.outputs.version, '-') }}

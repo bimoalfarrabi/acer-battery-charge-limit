@@ -51,8 +51,13 @@ if (-not (Test-Path (Join-Path $published 'resources.pri'))) {
 }
 
 Write-Host "Installing to $installDir ..."
-Get-Process BattCtl.App -ErrorAction SilentlyContinue | Stop-Process -Force
-Start-Sleep -Milliseconds 400
+# Never force-kill the tray app: a killed process leaves a ghost tray icon and
+# can leave the worker mailbox mid-write.
+$app = Get-Process BattCtl.App -ErrorAction SilentlyContinue
+if ($app) {
+    Write-Host 'Acer Battery is running. Quit it from the tray menu, then run this again.'
+    exit 1
+}
 
 if (-not (Test-Path $installDir)) { New-Item -ItemType Directory -Path $installDir | Out-Null }
 Copy-Item -Path (Join-Path $published '*') -Destination $installDir -Recurse -Force
