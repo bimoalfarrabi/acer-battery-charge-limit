@@ -14,7 +14,7 @@
                   IsPaneToggleButtonVisible="False"
                   IsBackButtonVisible="False">
             <TitleBar.IconSource>
-                <FontIconSource Glyph="&#xE83F;" />
+                <ImageIconSource ImageSource="Assets/AppIcon.png" />
             </TitleBar.IconSource>
         </TitleBar>
 

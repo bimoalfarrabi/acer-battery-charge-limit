@@ -81,6 +81,7 @@ if (-not $NoShortcut) {
     $shell = New-Object -ComObject WScript.Shell
     $shortcut = $shell.CreateShortcut($link)
     $shortcut.TargetPath = Join-Path $installDir 'BattCtl.App.exe'
+    $shortcut.IconLocation = Join-Path $installDir 'BattCtl.App.exe'
     $shortcut.WorkingDirectory = $installDir
     $shortcut.Description = 'Battery charge limit'
     $shortcut.Save()

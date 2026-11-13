@@ -23,7 +23,7 @@ PrivilegesRequired=admin
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 WizardStyle=modern dynamic
-SetupIconFile=..\src\BattCtl.App\Assets\TrayIcon.ico
+SetupIconFile=..\src\BattCtl.App\Assets\AppIcon.ico
 UninstallDisplayIcon={app}\{#MyAppExeName}
 CloseApplications=no
 RestartApplications=no
@@ -52,7 +52,7 @@ Source: "..\installer\unprovision.ps1"; DestDir: "{app}\install"
 Name: "{commonappdata}\battctl\mailbox"; Permissions: users-modify
 
 [Icons]
-Name: "{autoprograms}\Acer Battery"; Filename: "{app}\{#MyAppExeName}"
+Name: "{autoprograms}\Acer Battery"; Filename: "{app}\{#MyAppExeName}"; IconFilename: "{app}\{#MyAppExeName}"
 
 [InstallDelete]
 ; Clear stale files from the previous {app} contents only. Never point this at

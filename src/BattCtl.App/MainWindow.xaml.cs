@@ -24,6 +24,9 @@ public sealed partial class MainWindow : Window
         var windowHandle = WindowNative.GetWindowHandle(this);
         var windowId = Win32Interop.GetWindowIdFromWindow(windowHandle);
         var appWindow = AppWindow.GetFromWindowId(windowId);
+        // The exe icon covers Explorer and shortcuts; SetIcon covers the live
+        // window/taskbar entry for this unpackaged app.
+        appWindow.SetIcon(Path.Combine(AppContext.BaseDirectory, "Assets", "AppIcon.ico"));
         // 1000x460 fits the Dashboard exactly (content ends at 431 + 24 page
         // padding). Health and Settings are taller and scroll inside their
         // ScrollViewers instead of leaving a void here.
