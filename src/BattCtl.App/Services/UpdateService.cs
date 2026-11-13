@@ -49,6 +49,7 @@ public class UpdateService : ObservableObject
 
     private readonly HttpClient _http = new() { Timeout = TimeSpan.FromSeconds(30) };
     private readonly JsonSerializerOptions _json = new() { WriteIndented = true };
+    private readonly SemaphoreSlim _downloadGate = new(1, 1);
 
     private UpdateState _state = UpdateState.Idle;
     private string? _latestVersion;
@@ -248,83 +249,124 @@ public class UpdateService : ObservableObject
             return;
         }
 
-        // A verified installer from an earlier run is reused; retry skips the
-        // download.
-        var targetPath = InstallerPath(LatestVersion);
-        if (File.Exists(targetPath))
-        {
-            if (await VerifyInstallerAsync(targetPath).ConfigureAwait(true))
-            {
-                _downloadedInstallerPath = targetPath;
-                State = UpdateState.Ready;
-                return;
-            }
-        }
-
-        Directory.CreateDirectory(UpdatesDirectory);
-        var partPath = targetPath + ".part";
-        _downloadCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        State = UpdateState.Downloading;
-        DownloadProgress = 0;
-
+        // Serialize attempts: a second click while the first is still unwinding
+        // must not race the same .part file.
+        await _downloadGate.WaitAsync(cancellationToken).ConfigureAwait(true);
         try
         {
-            using var request = new HttpRequestMessage(HttpMethod.Get, _downloadUrl);
-            request.Headers.UserAgent.ParseAdd($"BattCtl/{AppInfo.Version}");
-            using var response = await _http.SendAsync(
-                request, HttpCompletionOption.ResponseHeadersRead, _downloadCancellation.Token).ConfigureAwait(true);
-            response.EnsureSuccessStatusCode();
-
-            var total = response.Content.Headers.ContentLength ?? _assetSize ?? -1;
-            await using var source = await response.Content.ReadAsStreamAsync(_downloadCancellation.Token).ConfigureAwait(true);
-            await using var target = File.Create(partPath);
-
-            var buffer = new byte[81920];
-            long written = 0;
-            int read;
-            while ((read = await source.ReadAsync(buffer, _downloadCancellation.Token).ConfigureAwait(true)) > 0)
+            // A verified installer from an earlier run is reused; retry skips the
+            // download.
+            var targetPath = InstallerPath(LatestVersion);
+            if (File.Exists(targetPath))
             {
-                await target.WriteAsync(buffer.AsMemory(0, read), _downloadCancellation.Token).ConfigureAwait(true);
-                written += read;
-                var percent = total > 0 ? Math.Min(100.0, written * 100.0 / total) : 0;
-                DownloadProgress = percent;
-                if (total > 0)
+                if (await VerifyInstallerAsync(targetPath).ConfigureAwait(true))
                 {
-                    progress.Report(percent);
+                    _downloadedInstallerPath = targetPath;
+                    State = UpdateState.Ready;
+                    return;
                 }
             }
 
-            await target.FlushAsync(_downloadCancellation.Token).ConfigureAwait(true);
-            if (!await VerifyFileHashAsync(partPath).ConfigureAwait(true))
-            {
-                File.Delete(partPath);
-                State = UpdateState.Error;
-                Message = "The downloaded installer failed its SHA-256 check and was deleted.";
-                MessageIsError = true;
-                return;
-            }
+            Directory.CreateDirectory(UpdatesDirectory);
+            CleanupStaleParts();
 
-            File.Move(partPath, targetPath, overwrite: true);
-            _downloadedInstallerPath = targetPath;
-            DownloadProgress = 100;
-            State = UpdateState.Ready;
-        }
-        catch (OperationCanceledException)
-        {
-            try { File.Delete(partPath); } catch (IOException) { } catch (UnauthorizedAccessException) { }
-            State = UpdateState.Available;
-        }
-        catch (Exception exception)
-        {
-            try { File.Delete(partPath); } catch (IOException) { } catch (UnauthorizedAccessException) { }
-            State = UpdateState.Error;
-            Message = $"Couldn't download the update: {exception.Message}";
-            MessageIsError = true;
+            // A unique .part name means a stale file locked by a previous attempt
+            // (or by an antivirus scan) can never block this download.
+            var partPath = targetPath + "." + Guid.NewGuid().ToString("N") + ".part";
+            _downloadCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            State = UpdateState.Downloading;
+            DownloadProgress = 0;
+
+            try
+            {
+                using var request = new HttpRequestMessage(HttpMethod.Get, _downloadUrl);
+                request.Headers.UserAgent.ParseAdd($"BattCtl/{AppInfo.Version}");
+                using var response = await _http.SendAsync(
+                    request, HttpCompletionOption.ResponseHeadersRead, _downloadCancellation.Token).ConfigureAwait(true);
+                response.EnsureSuccessStatusCode();
+
+                var total = response.Content.Headers.ContentLength ?? _assetSize ?? -1;
+                await using (var source = await response.Content.ReadAsStreamAsync(_downloadCancellation.Token).ConfigureAwait(true))
+                await using (var target = File.Create(partPath))
+                {
+                    var buffer = new byte[81920];
+                    long written = 0;
+                    int read;
+                    while ((read = await source.ReadAsync(buffer, _downloadCancellation.Token).ConfigureAwait(true)) > 0)
+                    {
+                        await target.WriteAsync(buffer.AsMemory(0, read), _downloadCancellation.Token).ConfigureAwait(true);
+                        written += read;
+                        var percent = total > 0 ? Math.Min(100.0, written * 100.0 / total) : 0;
+                        DownloadProgress = percent;
+                        if (total > 0)
+                        {
+                            progress.Report(percent);
+                        }
+                    }
+
+                    await target.FlushAsync(_downloadCancellation.Token).ConfigureAwait(true);
+                }
+
+                if (!await VerifyFileHashAsync(partPath).ConfigureAwait(true))
+                {
+                    TryDelete(partPath);
+                    State = UpdateState.Error;
+                    Message = "The downloaded installer failed its SHA-256 check and was deleted.";
+                    MessageIsError = true;
+                    return;
+                }
+
+                File.Move(partPath, targetPath, overwrite: true);
+                _downloadedInstallerPath = targetPath;
+                DownloadProgress = 100;
+                State = UpdateState.Ready;
+            }
+            catch (OperationCanceledException)
+            {
+                TryDelete(partPath);
+                State = UpdateState.Available;
+            }
+            catch (Exception exception)
+            {
+                TryDelete(partPath);
+                State = UpdateState.Error;
+                Message = $"Couldn't download the update: {exception.Message}";
+                MessageIsError = true;
+            }
+            finally
+            {
+                _downloadCancellation?.Dispose();
+                _downloadCancellation = null;
+            }
         }
         finally
         {
-            _downloadCancellation?.Dispose();
-            _downloadCancellation = null;
+            _downloadGate.Release();
+        }
+    }
+
+    private static void TryDelete(string path)
+    {
+        try { File.Delete(path); } catch (IOException) { } catch (UnauthorizedAccessException) { }
+    }
+
+    private void CleanupStaleParts()
+    {
+        try
+        {
+            foreach (var stale in Directory.EnumerateFiles(UpdatesDirectory, "*.part"))
+            {
+                TryDelete(stale);
+            }
+        }
+        catch (DirectoryNotFoundException)
+        {
+        }
+        catch (IOException)
+        {
+        }
+        catch (UnauthorizedAccessException)
+        {
         }
     }
 
