@@ -2,8 +2,8 @@
     build-installer.ps1 - publish the app and build the Inno Setup installer.
 
     Publishes self-contained to a local artifacts path, then runs ISCC.exe with
-    /DMyAppVersion and /DPublishDir. Needs Inno Setup 6.7.0 installed
-    (https://jrsoftware.org/isdl.php); the release CI installs it pinned.
+    /DMyAppVersion and /DPublishDir. Needs Inno Setup 6.7+ installed
+    (https://jrsoftware.org/isdl.php); the release CI uses the runner's copy.
 #>
 param(
     [string]$Version = '1.2.0',

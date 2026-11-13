@@ -141,7 +141,7 @@ BattCtl-Setup-<version>.exe SHA256`).
 
 Tagging `vX.Y.Z` (semver; a tag with a prerelease suffix like `v1.2.0-rc.1` publishes a
 prerelease) triggers `.github/workflows/release.yml`, which publishes the app
-self-contained, builds the installer with Inno Setup 6.7.0, and attaches the setup
+self-contained, builds the installer with Inno Setup 6.7+, and attaches the setup
 exe, a portable zip of the publish output, and `SHA256SUMS.txt` to the GitHub Release.
 A release can also be triggered manually from the Actions tab (`workflow_dispatch`)
 with a version input. To build the installer locally: `.\build-installer.ps1`

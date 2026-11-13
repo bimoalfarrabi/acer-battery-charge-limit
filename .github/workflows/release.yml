@@ -68,9 +68,15 @@ jobs:
           }
           Write-Output "Publish output verified: $($required -join ', ')"
 
-      - name: Install Inno Setup 6.7.0
+      - name: Ensure Inno Setup
         shell: pwsh
-        run: choco install innosetup --version=6.7.0 -y --no-progress
+        run: |
+          $iscc = 'C:\Program Files (x86)\Inno Setup 6\ISCC.exe'
+          if (Test-Path $iscc) {
+            Write-Output "Inno Setup already present: $iscc"
+          } else {
+            choco install innosetup --version=6.7.1 -y --no-progress
+          }
 
       - name: Build installer
         shell: pwsh
