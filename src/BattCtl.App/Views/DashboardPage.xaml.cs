@@ -2,13 +2,11 @@ using BattCtl.App.Services;
 using BattCtl.App.ViewModels;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
-using Microsoft.UI.Xaml.Media.Animation;
 
 namespace BattCtl.App.Views;
 
 public sealed partial class DashboardPage : Page
 {
-    private Storyboard? _skeletonPulse;
     private bool _suppressGpuToggle;
     private bool _gpuConfirmOpen;
     private string? _dismissedUpdateVersion;
@@ -29,7 +27,6 @@ public sealed partial class DashboardPage : Page
         App.UpdateService.PropertyChanged += OnUpdateServicePropertyChanged;
         UpdateValues();
         SyncInfoBars();
-        SyncSkeleton();
         SyncUpdateBar();
     }
 
@@ -38,7 +35,6 @@ public sealed partial class DashboardPage : Page
         ViewModel.ValuesUpdated -= UpdateValues;
         ViewModel.PropertyChanged -= OnViewModelPropertyChanged;
         App.UpdateService.PropertyChanged -= OnUpdateServicePropertyChanged;
-        _skeletonPulse?.Stop();
     }
 
     private void OnUpdateServicePropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
@@ -76,18 +72,18 @@ public sealed partial class DashboardPage : Page
     {
         ValueFade.SetRunText(PercentRun, PercentBlock, ViewModel.PercentText);
         ValueFade.SetText(StateSummary, ViewModel.StateSummaryText);
+        SetOptionalLine(RateLine, ViewModel.RateLineText);
         ValueFade.SetText(LimitState, ViewModel.LimitStateText);
         ValueFade.SetText(GpuState, ViewModel.GpuStateText);
         ValueFade.SetText(HealthValue, ViewModel.HealthText);
         ValueFade.SetText(CyclesValue, ViewModel.CycleCountText);
         ValueFade.SetText(VoltageValue, ViewModel.VoltageText);
-        UpdatedCaption.Text = ViewModel.LastUpdatedText;
     }
 
     private void OnViewModelPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
     {
         if (e.PropertyName is not ("" or nameof(MainViewModel.HasLimitMessage)
-            or nameof(MainViewModel.HasError) or nameof(MainViewModel.ShowSkeleton)
+            or nameof(MainViewModel.HasError)
             or nameof(MainViewModel.LimitMessageIsError)
             or nameof(MainViewModel.HasGpuMessage) or nameof(MainViewModel.GpuMessageIsError)
             or nameof(MainViewModel.GpuPresent) or nameof(MainViewModel.IsGpuPending)
@@ -97,7 +93,21 @@ public sealed partial class DashboardPage : Page
         }
 
         SyncInfoBars();
-        SyncSkeleton();
+    }
+
+    // A line that can legitimately be empty (AC with no flow, or an unconfirmed
+    // limit) must collapse rather than leave a 2px-stacked gap under the state.
+    private static void SetOptionalLine(TextBlock block, string value)
+    {
+        if (string.IsNullOrEmpty(value))
+        {
+            block.Text = string.Empty;
+            block.Visibility = Visibility.Collapsed;
+            return;
+        }
+
+        block.Visibility = Visibility.Visible;
+        ValueFade.SetText(block, value);
     }
 
     private void SyncInfoBars()
@@ -128,37 +138,6 @@ public sealed partial class DashboardPage : Page
         var gpuKnown = ViewModel.Snapshot?.Gpu?.Enabled is not null;
         GpuSwitch.OnContent = gpuKnown ? "On" : string.Empty;
         GpuSwitch.OffContent = gpuKnown ? "Off" : string.Empty;
-    }
-
-    // A gentle pulse marks the first-ever load; it only runs while the
-    // skeleton is on screen, which is one worker round trip, once.
-    private void SyncSkeleton()
-    {
-        if (ViewModel.ShowSkeleton && SkeletonPanel.XamlRoot is not null)
-        {
-            if (_skeletonPulse is null)
-            {
-                var animation = new DoubleAnimation
-                {
-                    From = 1.0,
-                    To = 0.45,
-                    Duration = new Duration(TimeSpan.FromMilliseconds(900)),
-                    AutoReverse = true,
-                    RepeatBehavior = RepeatBehavior.Forever,
-                    EasingFunction = new SineEase { EasingMode = EasingMode.EaseInOut }
-                };
-                Storyboard.SetTarget(animation, SkeletonPanel);
-                Storyboard.SetTargetProperty(animation, nameof(Opacity));
-                _skeletonPulse = new Storyboard();
-                _skeletonPulse.Children.Add(animation);
-            }
-
-            _skeletonPulse.Begin();
-        }
-        else
-        {
-            _skeletonPulse?.Stop();
-        }
     }
 
     private void LimitSwitch_Toggled(object sender, RoutedEventArgs e)
@@ -229,11 +208,6 @@ public sealed partial class DashboardPage : Page
     }
 
     private void CheckAgain_Click(object sender, RoutedEventArgs e)
-    {
-        _ = ViewModel.RefreshAsync();
-    }
-
-    private void TryAgain_Click(object sender, RoutedEventArgs e)
     {
         _ = ViewModel.RefreshAsync();
     }

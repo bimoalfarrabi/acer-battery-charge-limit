@@ -42,7 +42,6 @@ public sealed partial class HealthPage : Page
         ValueFade.SetText(RateValue, ViewModel.RateText);
         ValueFade.SetText(RemainingValue, ViewModel.RemainingCapacityText);
         ValueFade.SetText(EstimatedValue, ViewModel.EstimatedTimeText);
-        UpdatedCaption.Text = ViewModel.LastUpdatedText;
     }
 
     private void OnViewModelPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
@@ -57,11 +56,6 @@ public sealed partial class HealthPage : Page
     {
         RefreshInfoBar.Message = ViewModel.ErrorText ?? string.Empty;
         RefreshInfoBar.IsOpen = ViewModel.HasError && ViewModel.HasSnapshot;
-    }
-
-    private void TryAgain_Click(object sender, RoutedEventArgs e)
-    {
-        _ = ViewModel.RefreshAsync();
     }
 
     private void RefreshInfoBar_Closed(InfoBar sender, InfoBarClosedEventArgs args)

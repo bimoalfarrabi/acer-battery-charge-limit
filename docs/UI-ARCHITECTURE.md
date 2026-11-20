@@ -2,12 +2,18 @@
 
 Replacement front end for Acer Care Center's battery panel, which hangs on
 "still initializing". The UI never touches WMI directly: the WMI provider is
-only visible to an elevated caller, so every read and write goes through the
-existing `BattCtl` SYSTEM scheduled task.
+only visible to an elevated caller, so every firmware read and write goes
+through the existing `BattCtl` SYSTEM scheduled task.
+
+Battery telemetry is the exception: `Windows.System.Power`,
+`Windows.Devices.Power`, and `GetSystemPowerStatus` are readable from a medium
+IL process, so the app reads them itself and the worker is left with the
+firmware state and the few fields only SYSTEM can see.
 
 ```
 BattCtl.App (WinUI 3, medium IL)
-        |  writes request.txt, triggers schtasks, polls result.txt
+        |  reads directly: PowerManager, Battery.GetReport(), GetSystemPowerStatus
+        |  writes request.txt, triggers schtasks, polls result.txt  (worker tier only)
         v
 C:\ProgramData\battctl\mailbox\   <-- nonce-scoped mailbox
         ^
@@ -178,9 +184,49 @@ Rules the worker must honour:
 
 The worker runs under `-MultipleInstances IgnoreNew`. A second `schtasks /run`
 while a snapshot is in flight is a no-op, so the front end must tolerate
-`result.txt` never appearing and retry after its timeout. The UI polls a
-snapshot at most every 5 s while the window is visible, and stops polling when
-it is hidden or minimized.
+`result.txt` never appearing and retry after its timeout.
+
+### Two data tiers
+
+Battery telemetry has two tiers with different latencies, and the UI keeps them
+apart instead of polling one snapshot for everything.
+
+**Live tier (in-process, `Services/BatteryMonitor.cs`).** Percent, charge state,
+AC line, charge rate, remaining/full/design capacity, wear, and time remaining
+are read directly by the app through `Windows.System.Power.PowerManager`,
+`Windows.Devices.Power.Battery.GetReport()`, and `GetSystemPowerStatus`. No
+capability, no package identity, no worker, no scheduled task.
+
+- WinRT events (`RemainingChargePercentChanged`, `BatteryStatusChanged`,
+  `PowerSupplyStatusChanged`, `RemainingDischargeTimeChanged`,
+  `Battery.ReportUpdated`) give the push edge.
+- A 1 Hz sample bounds worst-case staleness; it is sub-microsecond and only
+  re-raises when a *displayed* value changed, so a tick that changes nothing
+  touches no binding.
+- Sampling runs only while the window is visible, not minimized, and a battery
+  page (Dashboard or Health) is showing. Settings does not sample.
+- A wall-clock vs stopwatch gap on the tick detects resume and forces a
+  re-read; no window subclassing or `WM_POWERBROADCAST` is needed.
+
+**Worker tier (SYSTEM, mailbox).** Only what genuinely needs SYSTEM remains:
+charge limit state, GPU state, voltage, cycle count, and the restore log.
+
+- No periodic poll. One snapshot on launch, one on resume, one on window
+  activation (debounced to 60 s), one on the first Health navigation per
+  session when the cache is older than 60 s, and one after every limit/GPU
+  command as the reconcile read-back.
+- The volatile battery fields the worker still reports are **ignored** once the
+  live tier has produced a reading. Field ownership is per-field, not
+  last-writer-wins, so a ~1 s stale worker value can never make the percent
+  stutter backwards.
+
+Measured on this machine: `BatteryReport` returned `Status=Idle`,
+`ChargeRateInMilliwatts=0`, `remaining=45507`, `full=45507`,
+`design=57488`; `PowerManager.RemainingDischargeTime` reported
+`TimeSpan.MaxValue` while not discharging. `ChargeRateInMilliwatts == 0` while
+`Idle` on AC is a real zero, not a missing value; `TimeSpan.MaxValue` is the
+unknown sentinel for discharge time; `BatteryFlag` cannot express "not
+charging", so the state comes from `BatteryReport.Status`.
 
 ### Measured cost (2026-10-30, this machine)
 
@@ -190,14 +236,17 @@ plus the scheduled-task launch. A `snapshot` will be somewhat slower.
 
 Design consequences — the UI must not treat ~1 s as instant:
 
-- Show the last known snapshot immediately on open (persist it to
-  `%LOCALAPPDATA%\BattCtl.App\last-snapshot.json`), then refresh in the
-  background and cross-fade when the new value lands.
+- Show the last known worker state immediately on open (persist it to
+  `%LOCALAPPDATA%\BattCtl.App\last-snapshot.json`), then reconcile in the
+  background. The live tier paints the battery card on the first frame, so
+  there is no skeleton to wait through.
 - A toggle must be optimistic: flip the switch, show a pending state on the
   control, and reconcile with the authoritative read-back. Never leave the user
   staring at a frozen switch for a second.
-- Never show a blocking spinner for routine refreshes; only the first-ever load
-  with no cached snapshot gets a skeleton.
+- A pending ring belongs on the control that is mid-action, never on the page
+  header. Routine reconciliation shows no spinner at all, and no page carries
+  an "Updated HH:mm:ss" caption — the values themselves are the freshness
+  signal.
 
 ## Project layout
 

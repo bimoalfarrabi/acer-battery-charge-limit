@@ -88,7 +88,16 @@ public sealed class TrayService : ITrayService, IDisposable
 
     public void SetTooltip(string text)
     {
-        _tooltip = text.Length > 127 ? text[..127] : text;
+        var trimmed = text.Length > 127 ? text[..127] : text;
+        // Identical text is the common case (each refresh repeats the same
+        // state); skip the NIM_MODIFY entirely or the shell gets spammed 2x
+        // per refresh with nothing new.
+        if (trimmed == _tooltip)
+        {
+            return;
+        }
+
+        _tooltip = trimmed;
         if (_visible)
         {
             NotifyIcon(NimModify);

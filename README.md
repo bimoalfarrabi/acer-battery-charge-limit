@@ -30,23 +30,30 @@ Battery Charge Limit: set -> OFF (charges to 100%)
 A native WinUI 3 app in the Windows 11 Fluent style (Mica backdrop, Segoe UI Variable,
 Fluent card and spacing tokens), built as the replacement for Care Center's battery panel.
 
-- **Dashboard** -- battery percentage, charge state, and the 80% limit switch. A
-  separate **Dedicated GPU** card shows the NVIDIA dGPU state with the same
-  optimistic toggle; turning it off asks for an inline confirmation, and the card
-  hides itself when the machine has no dedicated GPU.
+- **Dashboard** -- a live battery reading (percentage, charge state, charge rate and time
+  remaining) that updates on its own, plus the 80% limit switch. A separate **Dedicated
+  GPU** card shows the NVIDIA dGPU state with the same optimistic toggle; turning it off
+  asks for an inline confirmation, and the card hides itself when the machine has no
+  dedicated GPU.
 - **Health** -- design vs full-charge capacity, wear, cycle count, voltage, charge rate.
 - **Settings** -- launch at login, re-apply the saved limit, restore log, JSON export,
   and the GitHub update check.
-- **Tray** -- icon with a quick-toggle menu and a live tooltip. The same battery mark is
-  used for the window/taskbar icon, the title bar, the Start Menu shortcut, and the
-  installer.
+- **Tray** -- icon with a quick-toggle menu and a live tooltip that keeps updating while
+  the window is hidden. The same battery mark is used for the window/taskbar icon, the
+  title bar, the Start Menu shortcut, and the installer.
+
+Battery telemetry is read in-process through `Windows.System.Power` and
+`Windows.Devices.Power`, not through the SYSTEM worker, so percent, charge state, rate, and
+capacity update the moment they change. There is no spinner and no "updated at" caption:
+the values moving is the freshness signal. Only the charge limit, the GPU, voltage, and
+cycle count need the worker, and those reconcile silently in the background.
 
 It reads battery telemetry even when the firmware charge-limit interface is unreachable, and
 it degrades honestly instead of guessing: an unknown limit state is shown as unknown, never
 as "off", and a value the firmware does not report is shown as an em-dash, never as `0`.
 
-Every worker round trip costs about a second, so the app paints the last known reading
-immediately, updates in the background, and moves the switch optimistically before the
+Every worker round trip costs about a second, so the app paints the last known worker state
+immediately, reconciles in the background, and moves the switch optimistically before the
 firmware confirms it.
 
 To install from a source checkout, install the CLI first, then the app:

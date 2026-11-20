@@ -7,23 +7,14 @@
         <Style x:Key="DetailLabelStyle" TargetType="TextBlock" BasedOn="{StaticResource BodySecondaryTextBlockStyle}" />
         <Style x:Key="DetailValueStyle" TargetType="TextBlock" BasedOn="{StaticResource BodyStrongTextBlockStyle}">
             <Setter Property="HorizontalAlignment" Value="Right" />
+            <Setter Property="Typography.NumeralAlignment" Value="Tabular" />
         </Style>
     </Page.Resources>
 
     <ScrollViewer>
         <StackPanel Padding="24" Spacing="20">
 
-            <Grid>
-                <StackPanel>
-                    <TextBlock Text="Battery health" Style="{ThemeResource TitleTextBlockStyle}" />
-                    <TextBlock x:Name="UpdatedCaption" Style="{StaticResource CaptionSecondaryTextBlockStyle}" />
-                </StackPanel>
-                <ProgressRing HorizontalAlignment="Right"
-                              VerticalAlignment="Center"
-                              Width="16" Height="16"
-                              IsIndeterminate="True"
-                              Visibility="{x:Bind ViewModel.IsRefreshing, Mode=OneWay, Converter={StaticResource BoolToVisibilityConverter}}" />
-            </Grid>
+            <TextBlock Text="Battery health" Style="{ThemeResource TitleTextBlockStyle}" />
 
             <StackPanel Spacing="20"
                         Visibility="{x:Bind ViewModel.ShowContent, Mode=OneWay, Converter={StaticResource BoolToVisibilityConverter}}">
@@ -86,35 +77,6 @@
                         </Grid>
                     </StackPanel>
                 </Border>
-            </StackPanel>
-
-            <!-- First-launch skeleton -->
-            <StackPanel x:Name="SkeletonPanel"
-                        Spacing="20"
-                        Visibility="{x:Bind ViewModel.ShowSkeleton, Mode=OneWay, Converter={StaticResource BoolToVisibilityConverter}}">
-                <Border Height="150" CornerRadius="8"
-                        Background="{ThemeResource ControlFillColorSecondaryBrush}" />
-                <Border Height="240" CornerRadius="8"
-                        Background="{ThemeResource ControlFillColorSecondaryBrush}" />
-            </StackPanel>
-
-            <StackPanel Spacing="12"
-                        HorizontalAlignment="Center"
-                        Padding="0,48"
-                        Visibility="{x:Bind ViewModel.ShowLoadError, Mode=OneWay, Converter={StaticResource BoolToVisibilityConverter}}">
-                <FontIcon Glyph="&#xE783;" FontSize="32" HorizontalAlignment="Center"
-                          Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                <TextBlock Text="Can't reach the battery service"
-                           Style="{ThemeResource BodyStrongTextBlockStyle}"
-                           HorizontalAlignment="Center" />
-                <TextBlock Text="{x:Bind ViewModel.ErrorText, Mode=OneWay}"
-                           Style="{StaticResource CaptionSecondaryTextBlockStyle}"
-                           TextWrapping="Wrap"
-                           TextAlignment="Center"
-                           MaxWidth="360" />
-                <Button Content="Try again"
-                        HorizontalAlignment="Center"
-                        Click="TryAgain_Click" />
             </StackPanel>
 
             <InfoBar x:Name="RefreshInfoBar"

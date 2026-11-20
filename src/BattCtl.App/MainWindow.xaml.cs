@@ -1,7 +1,6 @@
 using BattCtl.App.Views;
 using Microsoft.UI;
 using Microsoft.UI.Composition.SystemBackdrops;
-using Microsoft.UI.Dispatching;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
@@ -13,7 +12,13 @@ namespace BattCtl.App;
 
 public sealed partial class MainWindow : Window
 {
-    private readonly DispatcherQueueTimer _refreshTimer;
+    private readonly AppWindow _appWindow;
+
+    // Debounce for the opportunistic worker refresh on Activated: at most one
+    // ~930ms mailbox round trip per minute, no matter how often the window is
+    // focused. MinValue means "unknown", which counts as stale.
+    private DateTime _lastWorkerRefresh = DateTime.MinValue;
+
     private bool _navigating;
 
     public MainWindow()
@@ -24,13 +29,15 @@ public sealed partial class MainWindow : Window
         var windowHandle = WindowNative.GetWindowHandle(this);
         var windowId = Win32Interop.GetWindowIdFromWindow(windowHandle);
         var appWindow = AppWindow.GetFromWindowId(windowId);
+        _appWindow = appWindow;
         // The exe icon covers Explorer and shortcuts; SetIcon covers the live
         // window/taskbar entry for this unpackaged app.
         appWindow.SetIcon(Path.Combine(AppContext.BaseDirectory, "Assets", "AppIcon.ico"));
-        // 1000x460 fits the Dashboard exactly (content ends at 431 + 24 page
-        // padding). Health and Settings are taller and scroll inside their
-        // ScrollViewers instead of leaving a void here.
-        appWindow.Resize(new SizeInt32(1000, 460));
+        // 1000x520 fits the Dashboard with no scroll: title, percent block,
+        // limit card, GPU card, and the at-a-glance tiles. A 10-second glance
+        // utility should not have to be scrolled. Health and Settings are taller
+        // and scroll inside their own ScrollViewers.
+        appWindow.Resize(new SizeInt32(1000, 520));
 
         if (AppWindowTitleBar.IsCustomizationSupported())
         {
@@ -57,26 +64,24 @@ public sealed partial class MainWindow : Window
             AppWindow.Hide();
         };
 
-        // Poll at most every 5s while visible; stop entirely when hidden or
-        // minimized. Each poll is a ~930ms mailbox round trip, so visibility
-        // gating is what keeps the app cheap.
-        _refreshTimer = DispatcherQueue.CreateTimer();
-        _refreshTimer.Interval = TimeSpan.FromSeconds(5);
-        _refreshTimer.Tick += (_, _) => _ = App.ViewModel.RefreshAsync();
-
-        appWindow.Changed += (_, _) => UpdatePolling(appWindow);
+        // Battery telemetry runs on its own 1 Hz monitor; the worker snapshot
+        // is only refreshed on activation (debounced), never on a timer here.
+        appWindow.Changed += (_, _) => UpdateSampling();
         Activated += (_, _) =>
         {
-            UpdatePolling(appWindow);
+            UpdateSampling();
             if (appWindow.IsVisible)
             {
-                _ = App.ViewModel.RefreshAsync();
+                App.ViewModel?.Telemetry.Refresh();
+                TryDebouncedWorkerRefresh();
             }
         };
 
+        ContentFrame.Navigated += (_, _) => OnFrameNavigated();
+
         SelectInitialPage();
         ContentFrame.Navigate(_initialPage);
-        UpdatePolling(appWindow);
+        UpdateSampling();
     }
 
     private readonly System.Type _initialPage = GetInitialPage();
@@ -106,21 +111,41 @@ public sealed partial class MainWindow : Window
             : DashboardItem;
     }
 
-    private void UpdatePolling(AppWindow appWindow)
+    // Telemetry samples only while the window is visible, not minimized, and a
+    // battery page is on screen. Settings needs no sampling.
+    private void UpdateSampling()
     {
-        var minimized = appWindow.Presenter is OverlappedPresenter presenter
+        var minimized = _appWindow.Presenter is OverlappedPresenter presenter
             && presenter.State == OverlappedPresenterState.Minimized;
 
-        if (appWindow.IsVisible && !minimized)
+        var shouldSample = _appWindow.IsVisible && !minimized
+            && (ContentFrame.CurrentSourcePageType == typeof(DashboardPage)
+                || ContentFrame.CurrentSourcePageType == typeof(HealthPage));
+
+        App.ViewModel?.Telemetry.SetSampling(shouldSample);
+    }
+
+    private void TryDebouncedWorkerRefresh()
+    {
+        if (App.ViewModel is null ||
+            DateTime.UtcNow - _lastWorkerRefresh < TimeSpan.FromSeconds(60))
         {
-            if (!_refreshTimer.IsRunning)
-            {
-                _refreshTimer.Start();
-            }
+            return;
         }
-        else if (_refreshTimer.IsRunning)
+
+        _lastWorkerRefresh = DateTime.UtcNow;
+        _ = App.ViewModel.RefreshAsync();
+    }
+
+    private void OnFrameNavigated()
+    {
+        UpdateSampling();
+
+        // Arriving on Health after a long tray-hidden stretch: the worker data
+        // may predate sleep or the whole session, so pull one fresh snapshot.
+        if (ContentFrame.CurrentSourcePageType == typeof(HealthPage))
         {
-            _refreshTimer.Stop();
+            TryDebouncedWorkerRefresh();
         }
     }
 

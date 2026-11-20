@@ -27,7 +27,7 @@ public enum UpdateState
 /// <summary>
 /// Owns the in-app update flow: check GitHub Releases, download the installer,
 /// verify its SHA-256, and hand off to an elevated Inno Setup run. Deliberately
-/// not on MainViewModel, which re-raises every property on its 5s poll.
+/// not on MainViewModel, which re-raises every property it owns on each update.
 ///
 /// SHA-256 proves integrity, not authenticity. The authenticity anchor is the
 /// TLS connection to github.com plus the release itself; there is no

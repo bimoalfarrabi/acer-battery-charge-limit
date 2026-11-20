@@ -32,8 +32,13 @@ here than on a 150% laptop.
 
 ## The 930 ms constraint — this is the design problem
 
-Every state change takes about a second. A switch that freezes for a second
-feels broken; a switch that responds instantly and then settles feels solid.
+Every *worker* state change takes about a second. A switch that freezes for a
+second feels broken; a switch that responds instantly and then settles feels
+solid.
+
+Battery telemetry is not subject to it: percent, state, rate, capacity, and
+wear are read in-process and update on their own. Only the charge limit, the
+GPU, voltage, and cycle count pay the round-trip cost.
 
 Therefore:
 
@@ -41,12 +46,13 @@ Therefore:
   dim, progress ring on the control, not a page-level spinner) covers the
   round trip. If the read-back disagrees, the switch animates back and a
   non-blocking inline message explains it.
-- **Cached first paint.** Persist the last snapshot; render it immediately on
-  open, then refresh in the background and cross-fade the changed values.
-  The app must never open to an empty skeleton after the first run.
-- **No blocking spinners** for routine refresh. Only the true first launch
-  (no cache) gets a skeleton, and it should be a shape-matched skeleton, not a
-  centred ring.
+- **Cached first paint.** Persist the last worker state; render it immediately
+  on open, then reconcile in the background and cross-fade the changed values.
+  The live battery tier fills on the first frame, so the app never opens to an
+  empty skeleton after the first run.
+- **No blocking spinners** for routine reconciliation, and no "Updated" caption
+  on any page. Freshness is shown by the values moving, not by a timestamp.
+  A ring appears only on a control whose own action is in flight.
 
 ## Scope (agreed)
 

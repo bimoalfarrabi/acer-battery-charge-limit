@@ -1,11 +1,16 @@
 using System.Text.Json;
 using BattCtl.App.Services;
+using Microsoft.UI.Dispatching;
 
 namespace BattCtl.App.ViewModels;
 
 // Single source of truth for the three pages and the tray tooltip.
 // Every worker round trip costs ~930ms, so: cached first paint, optimistic
 // toggle, and reconciliation against the authoritative read-back.
+// Battery telemetry that the OS gives us for free (percent, state, rate, wear)
+// comes from the BatteryMonitor instead, so it updates without touching the
+// worker mailbox; the worker stays authoritative for limit, GPU, voltage and
+// cycle count.
 public sealed class MainViewModel : ObservableObject
 {
     private const string UnknownValue = "\u2014"; // em dash, only ever a data placeholder glyph
@@ -15,14 +20,12 @@ public sealed class MainViewModel : ObservableObject
     private readonly CancellationTokenSource _shutdownTokenSource = new();
 
     private Snapshot? _snapshot;
+    private BatteryReading? _live;
     private bool _refreshInFlight;
     private bool? _pendingLimitTarget;
-    private bool _isInitialLoading;
-    private bool _isRefreshing;
     private string? _errorText;
     private string? _limitMessage;
     private bool _limitMessageIsError;
-    private DateTime _lastUpdated;
     private bool? _pendingGpuTarget;
     private string? _gpuMessage;
     private bool _gpuMessageIsError;
@@ -30,10 +33,54 @@ public sealed class MainViewModel : ObservableObject
     private string? _reapplyMessage;
     private bool _reapplySucceeded;
 
-    public MainViewModel(BattCtlClient client, SnapshotCache cache)
+    public MainViewModel(BattCtlClient client, SnapshotCache cache, DispatcherQueue dispatcher)
     {
         _client = client;
         _cache = cache;
+        Telemetry = new BatteryMonitor(dispatcher);
+        Telemetry.ReadingChanged += OnTelemetryReading;
+        Telemetry.Start();
+    }
+
+    public BatteryMonitor Telemetry { get; }
+
+    public void Dispose()
+    {
+        Telemetry.ReadingChanged -= OnTelemetryReading;
+        Telemetry.Dispose();
+        Shutdown();
+    }
+
+    private void OnTelemetryReading(object? sender, BatteryReading reading)
+    {
+        _live = reading;
+
+        // Only the projections that read the live value; never a blanket raise.
+        RaisePropertyChanged(nameof(PercentText));
+        RaisePropertyChanged(nameof(HasPercent));
+        RaisePropertyChanged(nameof(StateText));
+        RaisePropertyChanged(nameof(PowerText));
+        RaisePropertyChanged(nameof(StateSummaryText));
+        RaisePropertyChanged(nameof(RateText));
+        RaisePropertyChanged(nameof(RateLineText));
+        RaisePropertyChanged(nameof(RemainingCapacityText));
+        RaisePropertyChanged(nameof(EstimatedTimeText));
+        RaisePropertyChanged(nameof(FullChargeCapacityText));
+        RaisePropertyChanged(nameof(DesignCapacityText));
+        RaisePropertyChanged(nameof(WearText));
+        RaisePropertyChanged(nameof(HealthText));
+        RaisePropertyChanged(nameof(HealthValue));
+        RaisePropertyChanged(nameof(HasWear));
+        RaisePropertyChanged(nameof(HealthSummaryText));
+        RaisePropertyChanged(nameof(HasBattery));
+        RaisePropertyChanged(nameof(ShowContent));
+        RaisePropertyChanged(nameof(TrayTooltip));
+
+        // The pages paint imperatively from UpdateValues(), so a property-name
+        // raise alone would leave the live percent and rate frozen on screen.
+        // ValuesUpdated is the repaint signal for both pages; it must fire for
+        // telemetry exactly as it does for a worker snapshot.
+        ValuesUpdated?.Invoke();
     }
 
     public CancellationToken ShutdownToken => _shutdownTokenSource.Token;
@@ -47,18 +94,6 @@ public sealed class MainViewModel : ObservableObject
     }
 
     public bool HasSnapshot => _snapshot is not null;
-
-    public bool IsInitialLoading
-    {
-        get => _isInitialLoading;
-        private set => SetProperty(ref _isInitialLoading, value);
-    }
-
-    public bool IsRefreshing
-    {
-        get => _isRefreshing;
-        private set => SetProperty(ref _isRefreshing, value);
-    }
 
     public string? ErrorText
     {
@@ -74,31 +109,55 @@ public sealed class MainViewModel : ObservableObject
 
     public bool HasError => _errorText is not null;
 
-    public string LastUpdatedText => _lastUpdated == default
-        ? string.Empty
-        : $"Updated {_lastUpdated:HH:mm:ss}";
-
-    // Which top-level surface a page should show.
-    public bool ShowSkeleton => !HasSnapshot && IsInitialLoading;
-    public bool ShowContent => HasSnapshot;
-    public bool ShowLoadError => !HasSnapshot && !IsInitialLoading && HasError;
+    // Which top-level surface a page should show. The live reading alone is
+    // enough to show real content, and the worker snapshot keeps that true for
+    // the very first paint before the first telemetry read lands.
+    public bool HasBattery => _live?.HasValue == true || _snapshot?.Battery?.Present == true;
+    public bool ShowContent => HasBattery;
 
     // ---- Battery projections ---------------------------------------------
 
     private BatteryInfo? Battery => _snapshot?.Battery;
 
-    public string PercentText => Battery?.Percent?.ToString() ?? UnknownValue;
-    public bool HasPercent => Battery?.Percent is not null;
+    // The live reading, when a read has actually landed. Field-level ownership:
+    // while the monitor is healthy it owns these fields outright, and the
+    // worker snapshot is only the fallback for the very first paint.
+    private BatteryReading? Live => _live?.HasValue == true ? _live : null;
 
-    public string StateText => Battery?.State switch
+    private int? MergedPercent => Live is { } live ? live.Percent : Battery?.Percent;
+
+    private BatteryState MergedState => Live is { } live
+        ? live.State
+        : Battery?.State is string state ? ParseState(state) : BatteryState.Unknown;
+
+    private static BatteryState ParseState(string state) => state switch
     {
-        "Charging" => "Charging",
-        "Discharging" => "Discharging",
-        "NotCharging" => "Not charging",
+        "Charging" => BatteryState.Charging,
+        "Discharging" => BatteryState.Discharging,
+        "NotCharging" => BatteryState.NotCharging,
+        _ => BatteryState.Unknown
+    };
+
+    private bool? MergedPowerOnline => Live is { } live ? live.PowerOnline : Battery?.PowerOnline;
+
+    private double? MergedWear => Live is { } live ? live.WearPercent : Battery?.WearPercent;
+
+    private int? MergedEstimatedMinutes => Live is { } live
+        ? live.EstimatedMinutes
+        : Battery?.EstimatedMinutes;
+
+    public string PercentText => MergedPercent?.ToString() ?? UnknownValue;
+    public bool HasPercent => MergedPercent is not null;
+
+    public string StateText => MergedState switch
+    {
+        BatteryState.Charging => "Charging",
+        BatteryState.Discharging => "Discharging",
+        BatteryState.NotCharging => "Not charging",
         _ => "Unknown"
     };
 
-    public string PowerText => Battery?.PowerOnline switch
+    public string PowerText => MergedPowerOnline switch
     {
         true => "AC connected",
         false => "On battery",
@@ -109,42 +168,52 @@ public sealed class MainViewModel : ObservableObject
     {
         get
         {
-            if (Battery?.State is null && Battery?.PowerOnline is null)
+            if (MergedState == BatteryState.Unknown && MergedPowerOnline is null)
             {
                 return UnknownValue;
             }
 
-            var state = Battery?.State is null ? null : StateText;
-            var power = Battery?.PowerOnline is null ? null : PowerText;
+            var state = MergedState == BatteryState.Unknown ? null : StateText;
+            var power = MergedPowerOnline is null ? null : PowerText;
             return string.Join(" \u00B7 ", new[] { state, power }.Where(s => s is not null));
         }
     }
 
-    public string WearText => Battery?.WearPercent is double wear ? $"{wear:0.0}%" : UnknownValue;
+    public string WearText => MergedWear is double wear ? $"{wear:0.0}%" : UnknownValue;
 
-    public string HealthText => Battery?.WearPercent is double wear ? $"{100.0 - wear:0.0}%" : UnknownValue;
+    public string HealthText => MergedWear is double wear ? $"{100.0 - wear:0.0}%" : UnknownValue;
 
-    public double HealthValue => Battery?.WearPercent is double wear ? Math.Clamp(100.0 - wear, 0, 100) : 0;
+    // Floor for the progress bar binding only; HasWear keeps the bar hidden
+    // when wear is unknown, so this 0 never reaches a text label.
+    public double HealthValue => MergedWear is double wear ? Math.Clamp(100.0 - wear, 0, 100) : 0;
 
-    public bool HasWear => Battery?.WearPercent is not null;
+    public bool HasWear => MergedWear is not null;
 
     public string CycleCountText => Battery?.CycleCount?.ToString() ?? UnknownValue;
 
     public string VoltageText => Battery?.VoltageMv is int mv ? $"{mv / 1000.0:0.00} V" : UnknownValue;
 
-    public string RateText => Battery?.RateMw is int mw ? $"{mw / 1000.0:0.0} W" : UnknownValue;
+    public string RateText => Live is { } live
+        ? live.RateWatts is double watts ? $"{watts:0.0} W" : UnknownValue
+        : Battery?.RateMw is int mw ? $"{mw / 1000.0:0.0} W" : UnknownValue;
 
-    public string DesignCapacityText => Battery?.DesignCapacityMWh is int d ? $"{d:N0} mWh" : UnknownValue;
+    public string DesignCapacityText => (Live?.DesignCapacityMWh ?? Battery?.DesignCapacityMWh) is int d
+        ? $"{d:N0} mWh"
+        : UnknownValue;
 
-    public string FullChargeCapacityText => Battery?.FullChargeCapacityMWh is int f ? $"{f:N0} mWh" : UnknownValue;
+    public string FullChargeCapacityText => (Live?.FullChargeCapacityMWh ?? Battery?.FullChargeCapacityMWh) is int f
+        ? $"{f:N0} mWh"
+        : UnknownValue;
 
-    public string RemainingCapacityText => Battery?.RemainingCapacityMWh is int r ? $"{r:N0} mWh" : UnknownValue;
+    public string RemainingCapacityText => (Live?.RemainingCapacityMWh ?? Battery?.RemainingCapacityMWh) is int r
+        ? $"{r:N0} mWh"
+        : UnknownValue;
 
     public string EstimatedTimeText
     {
         get
         {
-            if (Battery?.EstimatedMinutes is not int minutes)
+            if (MergedEstimatedMinutes is not int minutes)
             {
                 return UnknownValue;
             }
@@ -156,7 +225,60 @@ public sealed class MainViewModel : ObservableObject
         }
     }
 
-    public string HealthSummaryText => Battery?.WearPercent is double wear
+    // Only the numbers, or the one fact the line above cannot express. The line
+    // above already names the state and the power source, so repeating
+    // "Discharging" or "not charging" here would say the same thing twice.
+    public string RateLineText
+    {
+        get
+        {
+            var rate = Live?.RateWatts;
+
+            switch (MergedState)
+            {
+                case BatteryState.Charging:
+                    return rate is double chargeWatts ? $"+{chargeWatts:0.0} W" : string.Empty;
+
+                case BatteryState.Discharging:
+                    if (rate is not double dischargeWatts)
+                    {
+                        return string.Empty;
+                    }
+
+                    var line = $"\u2212{Math.Abs(dischargeWatts):0.0} W";
+                    if (MergedEstimatedMinutes is int dischargeMinutes)
+                    {
+                        line += $" \u00B7 {FormatLeft(dischargeMinutes)} left";
+                    }
+
+                    return line;
+
+                // AC with no flow: the limit is why it stopped, and that is the
+                // one thing the state line cannot say. Without a confirmed limit
+                // there is nothing honest to add, so the page collapses the line.
+                case BatteryState.NotCharging when MergedPowerOnline == true:
+                    return _snapshot?.LimitOn switch
+                    {
+                        true => "Holding at the 80% limit",
+                        false => "Charging to 100%",
+                        null => string.Empty
+                    };
+
+                default:
+                    return string.Empty;
+            }
+        }
+    }
+
+    private static string FormatLeft(int minutes)
+    {
+        var span = TimeSpan.FromMinutes(Math.Max(0, minutes));
+        return span.TotalHours >= 1
+            ? $"{(int)span.TotalHours}h {span.Minutes}m"
+            : $"{span.Minutes}m";
+    }
+
+    public string HealthSummaryText => MergedWear is double wear
         ? $"{100.0 - wear:0.0}% of design capacity remains"
         : "Wear could not be read";
 
@@ -408,20 +530,20 @@ public sealed class MainViewModel : ObservableObject
     {
         get
         {
-            if (_snapshot?.Battery is not { } battery)
+            var percent = MergedPercent;
+            if (percent is null && _snapshot?.Battery is not { } battery)
             {
                 return "Battery Charge Limit";
             }
 
-            var limit = _snapshot.LimitOn switch
+            var limit = _snapshot?.LimitOn switch
             {
                 true => "limit on",
                 false => "limit off",
                 null => "limit unknown"
             };
 
-            var percent = battery.Percent?.ToString() ?? UnknownValue;
-            return $"{percent}% \u00B7 {StateText.ToLowerInvariant()} \u00B7 {limit}";
+            return $"{percent?.ToString() ?? UnknownValue}% \u00B7 {StateText.ToLowerInvariant()} \u00B7 {limit}";
         }
     }
 
@@ -435,10 +557,6 @@ public sealed class MainViewModel : ObservableObject
         {
             ApplySnapshot(cached.Snapshot, persist: false, asOf: cached.SavedAt);
         }
-        else
-        {
-            IsInitialLoading = true;
-        }
 
         await RefreshAsync();
     }
@@ -451,7 +569,6 @@ public sealed class MainViewModel : ObservableObject
         }
 
         _refreshInFlight = true;
-        IsRefreshing = true;
         try
         {
             var snapshot = await _client.GetSnapshotAsync(_shutdownTokenSource.Token);
@@ -478,8 +595,6 @@ public sealed class MainViewModel : ObservableObject
         finally
         {
             _refreshInFlight = false;
-            IsRefreshing = false;
-            IsInitialLoading = false;
             RaiseAllPropertiesChanged();
         }
     }
@@ -593,7 +708,6 @@ public sealed class MainViewModel : ObservableObject
     private void ApplySnapshot(Snapshot snapshot, bool persist, DateTime? asOf = null)
     {
         Snapshot = snapshot;
-        _lastUpdated = asOf ?? DateTime.Now;
         if (persist)
         {
             _cache.Save(snapshot);
@@ -622,7 +736,7 @@ public sealed class MainViewModel : ObservableObject
             BattCtlError.Unsupported => "This firmware does not expose a charge limit.",
             BattCtlError.ProviderFailure => "The battery provider returned an error.",
             // Transient: another battctl process holds the mailbox. Say nothing
-            // alarming — the next refresh will pick it up.
+            // alarming \u2014 the next refresh will pick it up.
             BattCtlError.MailboxBusy => "BattCtl is busy with another request; this reading may be a moment old.",
             // The deployed worker predates the snapshot command; say so plainly.
             BattCtlError.BadRequest when exception.Message.Contains("malformed", StringComparison.OrdinalIgnoreCase) =>

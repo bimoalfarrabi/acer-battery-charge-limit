@@ -33,12 +33,16 @@ public partial class App : Application
 
     protected override void OnLaunched(LaunchActivatedEventArgs args)
     {
-        ViewModel = new MainViewModel(new BattCtlClient(), new SnapshotCache());
+        // The view model must exist before the window navigates: DashboardPage
+        // and HealthPage bind App.ViewModel during x:Bind's initial evaluation,
+        // which runs inside the Frame navigation below.
+        ViewModel = new MainViewModel(
+            new BattCtlClient(),
+            new SnapshotCache(),
+            Microsoft.UI.Dispatching.DispatcherQueue.GetForCurrentThread()
+                ?? throw new InvalidOperationException("The UI thread has no DispatcherQueue."));
         UpdateService = new UpdateService();
 
-        // Tray icon is created after the main window exists: ForceCreate()
-        // spins up message-host infrastructure that is happier once the app's
-        // window and DispatcherQueue are fully live.
         ShowMainWindow();
 
         _tray = new TrayService();
@@ -98,7 +102,10 @@ public partial class App : Application
 
     public void Quit()
     {
-        ViewModel.Shutdown();
+        // Unsubscribes OS events and stops the telemetry timer; the window's
+        // Closed handler only hides the window, so this is the one teardown path.
+        // Dispose also cancels the shutdown token.
+        ViewModel.Dispose();
         _tray?.Dispose();
         Environment.Exit(0);
     }

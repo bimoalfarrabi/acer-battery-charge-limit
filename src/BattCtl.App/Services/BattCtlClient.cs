@@ -13,7 +13,8 @@ public sealed class BattCtlClient
     // Shared with the PowerShell CLI (battctl.ps1). The mailbox is a single
     // request/result slot and the task is registered with -MultipleInstances
     // IgnoreNew, so two overlapping callers make one wait out the full timeout.
-    // Measured: 3/15 concurrent CLI calls timed out while the app was polling,
+    // Measured: 3/15 concurrent CLI calls timed out while the app was refreshing
+    // every 5 s,
     // 0/15 with it stopped. NOTE: mutual exclusion is NOT the fix — holding the
     // mailbox starves the other side (measured: 5/15 failed on "in progress").
     // The app instead defers to the CLI: it takes the mutex only for a moment as a
