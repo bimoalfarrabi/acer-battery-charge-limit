@@ -51,7 +51,7 @@ Source: "..\installer\unprovision.ps1"; DestDir: "{app}\install"
 ; The mailbox must be writable by the normal user (medium IL); {app} stays admin-only.
 Name: "{commonappdata}\battctl\mailbox"; Permissions: users-modify
 ; History is written by SYSTEM (BattCtlHistory task); the app only reads it.
-Name: "{commonappdata}\battctl\history"; Permissions: users-read
+Name: "{commonappdata}\battctl\history"; Permissions: users-readexec
 
 [Icons]
 Name: "{autoprograms}\Acer Battery"; Filename: "{app}\{#MyAppExeName}"; IconFilename: "{app}\{#MyAppExeName}"
