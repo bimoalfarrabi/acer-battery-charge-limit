@@ -19,6 +19,7 @@ if ($KeepData -and $RemoveData) {
 
 Unregister-ScheduledTask -TaskName 'BattCtl' -Confirm:$false -ErrorAction SilentlyContinue
 Unregister-ScheduledTask -TaskName 'BattCtlResume' -Confirm:$false -ErrorAction SilentlyContinue
+Unregister-ScheduledTask -TaskName 'BattCtlHistory' -Confirm:$false -ErrorAction SilentlyContinue
 
 $BattCtlDir = 'C:\Program Files\battctl'
 $machinePath = [Environment]::GetEnvironmentVariable('Path', 'Machine')

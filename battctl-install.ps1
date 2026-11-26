@@ -4,6 +4,8 @@
       * creates the mailbox C:\ProgramData\battctl\mailbox and grants the invoking user Modify
       * registers the on-demand scheduled task "BattCtl" (SYSTEM, highest privileges, 60s cap)
       * registers the boot/resume scheduled task "BattCtlResume" (SYSTEM, highest privileges)
+      * registers the battery-history sampler task "BattCtlHistory" (SYSTEM, every 5 min)
+      * creates C:\ProgramData\battctl\history and grants the invoking user read
     Self-elevates via UAC on the first run. Re-run it any time to update.
     -Quiet skips self-elevation and the interactive output (used by the Inno Setup
     installer, which is already elevated and captures no console).
@@ -22,9 +24,12 @@ function Say([string]$Message) {
 
 $SourceDir = Split-Path -Parent $PSCommandPath
 $TargetDir = 'C:\Program Files\battctl'
-$Mailbox   = 'C:\ProgramData\battctl\mailbox'
+$DataDir   = 'C:\ProgramData\battctl'
+$Mailbox   = Join-Path $DataDir 'mailbox'
+$HistoryDir = Join-Path $DataDir 'history'
 $TaskName  = 'BattCtl'
 $ResumeTaskName = 'BattCtlResume'
+$HistoryTaskName = 'BattCtlHistory'
 $WorkerSrc = Join-Path $SourceDir 'battctl-worker.ps1'
 $WorkerDst = Join-Path $TargetDir 'battctl-worker.ps1'
 $FrontendPsSrc  = Join-Path $SourceDir 'battctl.ps1'
@@ -42,6 +47,7 @@ if (-not $isAdmin -and -not $Quiet) {
 
 New-Item -ItemType Directory -Force -Path $TargetDir | Out-Null
 New-Item -ItemType Directory -Force -Path $Mailbox   | Out-Null
+New-Item -ItemType Directory -Force -Path $HistoryDir | Out-Null
 
 # The Inno Setup installer already copied the worker and CLI into place, so
 # -ProvisionOnly skips the source checks and copy and only does the plumbing
@@ -84,6 +90,9 @@ if ($targetOnPath) {
 $me = "$env:USERDOMAIN\$env:USERNAME"
 $null = icacls $Mailbox /grant "${me}:(OI)(CI)M"
 $null = icacls (Split-Path $Mailbox -Parent) /grant "${me}:(OI)(CI)M"
+# History is written by SYSTEM; the app only reads it, so read is enough even
+# though the parent directory grant above also reaches it.
+$null = icacls $HistoryDir /grant "${me}:(OI)(CI)R"
 
 $action = New-ScheduledTaskAction -Execute 'powershell.exe' `
     -Argument ('-NoProfile -ExecutionPolicy Bypass -File "' + $WorkerDst + '"')
@@ -123,12 +132,30 @@ Register-ScheduledTask -TaskName $ResumeTaskName -Action $resumeAction -Principa
     -Trigger @($boot, $evt) -Force | Out-Null
 Grant-TaskInteractiveUsersRun $ResumeTaskName
 
+# Battery history sampler: every 5 minutes forever. StartWhenAvailable covers
+# wake-ups missed while asleep (honest gaps, not missed windows). The repetition
+# duration is long but bounded: [TimeSpan]::MaxValue serializes to
+# P99999999DT23H59M59S, which Task Scheduler rejects with 0x80041318, and a
+# re-install/update re-registers the task long before 10 years pass.
+$historyAction = New-ScheduledTaskAction -Execute 'powershell.exe' `
+    -Argument ('-NoProfile -ExecutionPolicy Bypass -File "' + $WorkerDst + '" -Action sample')
+$historyTrigger = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) `
+    -RepetitionInterval (New-TimeSpan -Minutes 5) -RepetitionDuration (New-TimeSpan -Days 3650)
+$historySettings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries `
+    -ExecutionTimeLimit (New-TimeSpan -Minutes 2) -MultipleInstances IgnoreNew -StartWhenAvailable
+Register-ScheduledTask -TaskName $HistoryTaskName -Action $historyAction -Principal $principal `
+    -Trigger $historyTrigger -Settings $historySettings -Force -ErrorAction Stop | Out-Null
+# Harmless for a read-only sampler, and it keeps the task visible to a
+# non-elevated `schtasks /query` for troubleshooting.
+Grant-TaskInteractiveUsersRun $HistoryTaskName
+
 Say ''
 Say 'Installed:'
 Say ("  worker : $WorkerDst")
 Say ("  mailbox: $Mailbox")
 Say ("  task   : $TaskName  (SYSTEM / highest / on-demand)")
 Say ("  resume : $ResumeTaskName  (SYSTEM / highest / boot and resume)")
+Say ("  history: $HistoryTaskName  (SYSTEM / highest / sample every 5 min)")
 Say ''
 Say 'Test with:  battctl status (smoke test; a new terminal may be required for battctl to be found)'
 exit 0

@@ -11,6 +11,7 @@ public partial class App : Application
     public static MainWindow? MainWindow { get; private set; }
     public static MainViewModel ViewModel { get; private set; } = null!;
     public static UpdateService UpdateService { get; private set; } = null!;
+    public static HistoryViewModel History { get; private set; } = null!;
 
     private TrayService? _tray;
 
@@ -42,6 +43,11 @@ public partial class App : Application
             Microsoft.UI.Dispatching.DispatcherQueue.GetForCurrentThread()
                 ?? throw new InvalidOperationException("The UI thread has no DispatcherQueue."));
         UpdateService = new UpdateService();
+
+        // History must exist before the window navigates: HistoryPage binds
+        // App.History during x:Bind's initial evaluation, which runs inside
+        // the Frame navigation below.
+        History = new HistoryViewModel(new HistoryStore());
 
         ShowMainWindow();
 
@@ -106,6 +112,7 @@ public partial class App : Application
         // Closed handler only hides the window, so this is the one teardown path.
         // Dispose also cancels the shutdown token.
         ViewModel.Dispose();
+        History.Dispose();
         _tray?.Dispose();
         Environment.Exit(0);
     }

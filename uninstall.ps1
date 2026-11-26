@@ -1,6 +1,7 @@
 <#
     uninstall.ps1 - removes everything battctl installed. Self-elevates via UAC.
-      * unregisters the "BattCtl" and "BattCtlResume" scheduled tasks
+      * unregisters the "BattCtl", "BattCtlResume" and "BattCtlHistory"
+        scheduled tasks
       * deletes C:\Program Files\battctl
       * deletes C:\Program Files\BattCtl.App and its Start Menu shortcut
       * removes the HKCU Run entry for each real user profile
@@ -30,6 +31,7 @@ if (-not $isAdmin) {
 
 Unregister-ScheduledTask -TaskName 'BattCtl' -Confirm:$false -ErrorAction SilentlyContinue
 Unregister-ScheduledTask -TaskName 'BattCtlResume' -Confirm:$false -ErrorAction SilentlyContinue
+Unregister-ScheduledTask -TaskName 'BattCtlHistory' -Confirm:$false -ErrorAction SilentlyContinue
 $TargetDir = 'C:\Program Files\battctl'
 $machinePath = [Environment]::GetEnvironmentVariable('Path', 'Machine')
 if (-not [string]::IsNullOrEmpty($machinePath)) {

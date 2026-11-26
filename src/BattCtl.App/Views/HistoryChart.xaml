@@ -1,0 +1,23 @@
+<UserControl
+    x:Class="BattCtl.App.Views.HistoryChart"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <!-- Plot canvas on top of the label row. HoverCanvas is hit-test
+         transparent so pointer events land on PlotCanvas; the control never
+         clips a flyout because there is none. Height is kept tight so the
+         chart card, its legend and the tile row all fit above the fold in a
+         1000x520 window. -->
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="148" />
+            <RowDefinition Height="4" />
+            <RowDefinition Height="16" />
+        </Grid.RowDefinitions>
+        <Grid Grid.Row="0">
+            <Canvas x:Name="PlotCanvas" />
+            <Canvas x:Name="HoverCanvas" IsHitTestVisible="False" />
+        </Grid>
+        <Canvas x:Name="LabelCanvas" Grid.Row="2" />
+    </Grid>
+</UserControl>

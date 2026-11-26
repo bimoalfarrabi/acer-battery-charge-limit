@@ -1,0 +1,369 @@
+<Page
+    x:Class="BattCtl.App.Views.HistoryPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:local="using:BattCtl.App.Views">
+
+    <Page.Resources>
+        <local:HistoryKindBrushConverter x:Key="HistoryKindBrushConverter" />
+
+        <!-- Joined range strip. Three-sides-zero corner radius per button and
+             a -1px left margin overlap the neighbours' borders, so the group
+             reads as one segmented control, not four pills. -->
+        <Style x:Key="RangeRadioButtonStyle" TargetType="RadioButton">
+            <Setter Property="MinWidth" Value="56" />
+            <Setter Property="MinHeight" Value="28" />
+            <Setter Property="Padding" Value="10,0" />
+            <Setter Property="HorizontalContentAlignment" Value="Center" />
+            <Setter Property="VerticalContentAlignment" Value="Center" />
+            <Setter Property="FontSize" Value="12" />
+            <Setter Property="UseSystemFocusVisuals" Value="True" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="RadioButton">
+                        <Border x:Name="RootBorder"
+                                Background="Transparent"
+                                BorderBrush="{ThemeResource ControlStrokeColorDefaultBrush}"
+                                BorderThickness="1"
+                                CornerRadius="{TemplateBinding CornerRadius}">
+                            <VisualStateManager.VisualStateGroups>
+                                <!-- Hover fill and the checked fill target two
+                                     different layers: RadioButton drives
+                                     CommonStates and CheckStates independently,
+                                     so sharing one Background would let the last
+                                     group win and leave the old item highlighted. -->
+                                <VisualStateGroup x:Name="CommonStates">
+                                    <VisualState x:Name="Normal" />
+                                    <VisualState x:Name="PointerOver">
+                                        <VisualState.Setters>
+                                            <Setter Target="RootBorder.Background" Value="{ThemeResource ControlFillColorSecondaryBrush}" />
+                                        </VisualState.Setters>
+                                    </VisualState>
+                                    <VisualState x:Name="Pressed">
+                                        <VisualState.Setters>
+                                            <Setter Target="RootBorder.Background" Value="{ThemeResource ControlFillColorTertiaryBrush}" />
+                                        </VisualState.Setters>
+                                    </VisualState>
+                                    <VisualState x:Name="Disabled">
+                                        <VisualState.Setters>
+                                            <Setter Target="ContentPresenter.Foreground" Value="{ThemeResource TextFillColorDisabledBrush}" />
+                                        </VisualState.Setters>
+                                    </VisualState>
+                                </VisualStateGroup>
+                                <VisualStateGroup x:Name="CheckStates">
+                                    <VisualState x:Name="Unchecked">
+                                        <VisualState.Setters>
+                                            <Setter Target="CheckFill.Background" Value="Transparent" />
+                                            <Setter Target="ContentPresenter.Foreground" Value="{ThemeResource TextFillColorSecondaryBrush}" />
+                                        </VisualState.Setters>
+                                    </VisualState>
+                                    <VisualState x:Name="Checked">
+                                        <VisualState.Setters>
+                                            <Setter Target="CheckFill.Background" Value="{ThemeResource ControlFillColorDefaultBrush}" />
+                                            <Setter Target="ContentPresenter.Foreground" Value="{ThemeResource TextFillColorPrimaryBrush}" />
+                                        </VisualState.Setters>
+                                    </VisualState>
+                                    <VisualState x:Name="Indeterminate">
+                                        <VisualState.Setters>
+                                            <Setter Target="CheckFill.Background" Value="{ThemeResource ControlFillColorDefaultBrush}" />
+                                            <Setter Target="ContentPresenter.Foreground" Value="{ThemeResource TextFillColorPrimaryBrush}" />
+                                        </VisualState.Setters>
+                                    </VisualState>
+                                </VisualStateGroup>
+                            </VisualStateManager.VisualStateGroups>
+                            <Grid>
+                                <Border x:Name="CheckFill"
+                                        Background="Transparent"
+                                        CornerRadius="{TemplateBinding CornerRadius}" />
+                                <ContentPresenter x:Name="ContentPresenter"
+                                                  Content="{TemplateBinding Content}"
+                                                  HorizontalAlignment="Center"
+                                                  VerticalAlignment="Center"
+                                                  Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                            </Grid>
+                        </Border>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+    </Page.Resources>
+
+    <ScrollViewer>
+        <StackPanel Padding="24" Spacing="16">
+
+            <TextBlock Text="History" Style="{ThemeResource TitleTextBlockStyle}" />
+
+            <!-- First run: the directory exists to no one. The background task
+                 records, not the app, so the copy names Windows, not BattCtl. -->
+            <Border x:Name="FirstRunCard"
+                    Style="{StaticResource CardBorderStyle}"
+                    Visibility="Collapsed">
+                <StackPanel Spacing="8">
+                    <TextBlock Text="No history yet." Style="{ThemeResource BodyStrongTextBlockStyle}" />
+                    <TextBlock Text="Samples are recorded every 5 minutes while Windows is awake."
+                               Style="{StaticResource BodySecondaryTextBlockStyle}"
+                               TextWrapping="Wrap" />
+                    <TextBlock Text="History covers times when Windows is awake. Gaps mean the PC was asleep or off."
+                               Style="{StaticResource CaptionSecondaryTextBlockStyle}"
+                               TextWrapping="Wrap" />
+                </StackPanel>
+            </Border>
+
+            <StackPanel x:Name="ContentRoot" Spacing="16" Visibility="Collapsed">
+
+                <!-- Chart card: the page's one tall element and focal point. -->
+                <Border Style="{StaticResource CardBorderStyle}">
+                    <StackPanel Spacing="10">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
+                                <TextBlock Text="Charge level"
+                                           Style="{StaticResource CaptionStrongTextBlockStyle}"
+                                           VerticalAlignment="Center" />
+                                <ProgressRing Width="16" Height="16"
+                                              IsIndeterminate="True"
+                                              AutomationProperties.Name="Loading history"
+                                              VerticalAlignment="Center"
+                                              Visibility="{x:Bind ViewModel.IsLoading, Mode=OneWay, Converter={StaticResource BoolToVisibilityConverter}}" />
+                            </StackPanel>
+                            <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                                <RadioButton x:Name="DayRadio"
+                                             Content="24 h"
+                                             GroupName="HistoryRange"
+                                             Style="{StaticResource RangeRadioButtonStyle}"
+                                             CornerRadius="4,0,0,4"
+                                             Checked="Range_Checked" />
+                                <RadioButton x:Name="WeekRadio"
+                                             Content="7 d"
+                                             GroupName="HistoryRange"
+                                             Style="{StaticResource RangeRadioButtonStyle}"
+                                             CornerRadius="0"
+                                             Margin="-1,0,0,0"
+                                             Checked="Range_Checked" />
+                                <RadioButton x:Name="MonthRadio"
+                                             Content="30 d"
+                                             GroupName="HistoryRange"
+                                             Style="{StaticResource RangeRadioButtonStyle}"
+                                             CornerRadius="0"
+                                             Margin="-1,0,0,0"
+                                             Checked="Range_Checked" />
+                                <RadioButton x:Name="QuarterRadio"
+                                             Content="90 d"
+                                             GroupName="HistoryRange"
+                                             Style="{StaticResource RangeRadioButtonStyle}"
+                                             CornerRadius="0,4,4,0"
+                                             Margin="-1,0,0,0"
+                                             Checked="Range_Checked" />
+                            </StackPanel>
+                        </Grid>
+
+                        <local:HistoryChart x:Name="Chart" HoverChanged="Chart_HoverChanged" />
+
+                        <!-- Legend on its own row, then the readout. Two rows
+                             instead of one keeps the readout on a single line
+                             at any window width; the readout is the hover
+                             target's answer, with no flyout to clip. -->
+                        <StackPanel Spacing="4">
+                            <StackPanel Orientation="Horizontal" Spacing="12">
+                                <StackPanel Orientation="Horizontal" Spacing="4">
+                                    <Rectangle Width="12" Height="3"
+                                               Fill="{ThemeResource SystemFillColorSuccessBrush}"
+                                               VerticalAlignment="Center" />
+                                    <TextBlock Text="Charging" Style="{StaticResource CaptionSecondaryTextBlockStyle}" />
+                                </StackPanel>
+                                <StackPanel Orientation="Horizontal" Spacing="4">
+                                    <Rectangle Width="12" Height="3"
+                                               Fill="{ThemeResource TextFillColorSecondaryBrush}"
+                                               VerticalAlignment="Center" />
+                                    <TextBlock Text="Discharging" Style="{StaticResource CaptionSecondaryTextBlockStyle}" />
+                                </StackPanel>
+                                <StackPanel Orientation="Horizontal" Spacing="4">
+                                    <Canvas Width="12" Height="4" VerticalAlignment="Center">
+                                        <Line X1="0" Y1="2" X2="12" Y2="2"
+                                              StrokeThickness="2"
+                                              Stroke="{ThemeResource ControlStrongStrokeColorDefaultBrush}"
+                                              StrokeDashArray="4 3" />
+                                    </Canvas>
+                                    <TextBlock Text="On AC, not charging" Style="{StaticResource CaptionSecondaryTextBlockStyle}" />
+                                </StackPanel>
+                                <StackPanel x:Name="LimitLegendItem"
+                                            Orientation="Horizontal" Spacing="4">
+                                    <Canvas Width="12" Height="4" VerticalAlignment="Center">
+                                        <Line X1="0" Y1="2" X2="12" Y2="2"
+                                              StrokeThickness="1"
+                                              Stroke="{ThemeResource HistoryLimitLineBrush}"
+                                              StrokeDashArray="1 3"
+                                              StrokeDashCap="Round" />
+                                    </Canvas>
+                                    <TextBlock Text="80% limit (set)" Style="{StaticResource CaptionSecondaryTextBlockStyle}" />
+                                </StackPanel>
+                                <StackPanel Orientation="Horizontal" Spacing="4">
+                                    <Canvas Width="12" Height="4" VerticalAlignment="Center">
+                                        <Line X1="0" Y1="2" X2="12" Y2="2"
+                                              StrokeThickness="1"
+                                              Stroke="{ThemeResource DividerStrokeColorDefaultBrush}"
+                                              StrokeDashArray="1 3"
+                                              StrokeDashCap="Round" />
+                                    </Canvas>
+                                    <TextBlock Text="gap" Style="{StaticResource CaptionSecondaryTextBlockStyle}" />
+                                </StackPanel>
+                            </StackPanel>
+                            <TextBlock x:Name="ReadoutText"
+                                       HorizontalAlignment="Right"
+                                       Style="{StaticResource CaptionSecondaryTextBlockStyle}"
+                                       Typography.NumeralAlignment="Tabular" />
+                        </StackPanel>
+
+                        <!-- Sparse and empty-range notes, inside the card they
+                             explain. -->
+                        <TextBlock x:Name="OneSampleNote"
+                                   Style="{StaticResource CaptionSecondaryTextBlockStyle}"
+                                   Text="1 sample so far. The chart appears with the next one."
+                                   Visibility="Collapsed" />
+                        <StackPanel x:Name="RangeEmptyNote" Spacing="2" Visibility="Collapsed">
+                            <TextBlock Text="No samples in this range."
+                                       Style="{ThemeResource BodyStrongTextBlockStyle}" />
+                            <TextBlock x:Name="EarliestDataText"
+                                       Style="{StaticResource CaptionSecondaryTextBlockStyle}" />
+                        </StackPanel>
+                    </StackPanel>
+                </Border>
+
+                <!-- Summary tiles: real reductions of the recorded samples. -->
+                <StackPanel x:Name="TilesBlock" Spacing="4">
+                    <Grid ColumnSpacing="12">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <Border Style="{StaticResource StatTileBorderStyle}" Grid.Column="0">
+                            <StackPanel Spacing="2">
+                                <TextBlock Text="On battery" Style="{StaticResource CaptionSecondaryTextBlockStyle}" />
+                                <TextBlock x:Name="OnBatteryValue"
+                                           Style="{ThemeResource BodyLargeTextBlockStyle}"
+                                           Typography.NumeralAlignment="Tabular" />
+                            </StackPanel>
+                        </Border>
+                        <Border Style="{StaticResource StatTileBorderStyle}" Grid.Column="1">
+                            <StackPanel Spacing="2">
+                                <TextBlock Text="On AC" Style="{StaticResource CaptionSecondaryTextBlockStyle}" />
+                                <TextBlock x:Name="OnAcValue"
+                                           Style="{ThemeResource BodyLargeTextBlockStyle}"
+                                           Typography.NumeralAlignment="Tabular" />
+                            </StackPanel>
+                        </Border>
+                        <Border Style="{StaticResource StatTileBorderStyle}" Grid.Column="2">
+                            <StackPanel Spacing="2">
+                                <TextBlock Text="Lowest level" Style="{StaticResource CaptionSecondaryTextBlockStyle}" />
+                                <TextBlock x:Name="LowestValue"
+                                           Style="{ThemeResource BodyLargeTextBlockStyle}"
+                                           Typography.NumeralAlignment="Tabular" />
+                            </StackPanel>
+                        </Border>
+                        <Border Style="{StaticResource StatTileBorderStyle}" Grid.Column="3">
+                            <StackPanel Spacing="2">
+                                <TextBlock x:Name="EnergyUsedLabel" Text="Energy used"
+                                           Style="{StaticResource CaptionSecondaryTextBlockStyle}" />
+                                <TextBlock x:Name="EnergyValue"
+                                           Style="{ThemeResource BodyLargeTextBlockStyle}"
+                                           Typography.NumeralAlignment="Tabular" />
+                            </StackPanel>
+                        </Border>
+                    </Grid>
+                    <TextBlock x:Name="CoverageText"
+                               Style="{StaticResource CaptionSecondaryTextBlockStyle}"
+                               Visibility="Collapsed" />
+                </StackPanel>
+
+                <!-- Sessions: contiguous runs of one state, newest first. -->
+                <Border Style="{StaticResource CardBorderStyle}">
+                    <StackPanel Spacing="10">
+                        <TextBlock Text="Sessions" Style="{ThemeResource BodyStrongTextBlockStyle}" />
+                        <TextBlock Text="Contiguous runs of the same state, newest first. Times are local."
+                                   Style="{StaticResource CaptionSecondaryTextBlockStyle}" />
+                        <TextBlock x:Name="EnergyNote"
+                                   Text="Energy is estimated from percent change when capacity was not recorded."
+                                   Style="{StaticResource CaptionSecondaryTextBlockStyle}"
+                                   TextWrapping="Wrap"
+                                   Visibility="Collapsed" />
+                        <!-- ItemsSource is assigned imperatively in UpdateView:
+                             Sessions is a new list per rebuild, and the page
+                             already repaints on every ViewChanged. -->
+                        <ListView x:Name="SessionsList"
+                                  MaxHeight="240"
+                                  SelectionMode="None"
+                                  IsItemClickEnabled="False">
+                            <ListView.ItemTemplate>
+                                <DataTemplate>
+                                    <Grid ColumnSpacing="16" Padding="0,6">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <StackPanel Grid.Column="0" Spacing="0">
+                                            <TextBlock Text="{Binding KindText}"
+                                                       Style="{ThemeResource BodyStrongTextBlockStyle}"
+                                                       Foreground="{Binding Kind, Converter={StaticResource HistoryKindBrushConverter}}" />
+                                            <TextBlock Text="{Binding LevelDetailText}"
+                                                       Style="{StaticResource CaptionSecondaryTextBlockStyle}" />
+                                        </StackPanel>
+                                        <TextBlock Grid.Column="1"
+                                                   Style="{StaticResource CaptionSecondaryTextBlockStyle}"
+                                                   Typography.NumeralAlignment="Tabular"
+                                                   VerticalAlignment="Center">
+                                            <Run Text="{Binding TimeText}" /><Run Text="{Binding GapText}" />
+                                        </TextBlock>
+                                        <TextBlock Grid.Column="2"
+                                                   Style="{ThemeResource BodyTextBlockStyle}"
+                                                   Typography.NumeralAlignment="Tabular"
+                                                   Text="{Binding DurationText}"
+                                                   VerticalAlignment="Center" />
+                                        <TextBlock Grid.Column="3"
+                                                   Style="{ThemeResource BodyTextBlockStyle}"
+                                                   Typography.NumeralAlignment="Tabular"
+                                                   Text="{Binding LevelText}"
+                                                   VerticalAlignment="Center" />
+                                        <TextBlock Grid.Column="4"
+                                                   Style="{ThemeResource BodyTextBlockStyle}"
+                                                   Typography.NumeralAlignment="Tabular"
+                                                   Text="{Binding EnergyText}"
+                                                   VerticalAlignment="Center" />
+                                    </Grid>
+                                </DataTemplate>
+                            </ListView.ItemTemplate>
+                        </ListView>
+                        <TextBlock x:Name="NoSessionsNote"
+                                   Text="No sessions in this range."
+                                   Style="{StaticResource CaptionSecondaryTextBlockStyle}"
+                                   Visibility="Collapsed" />
+                    </StackPanel>
+                </Border>
+            </StackPanel>
+
+            <!-- Partial parse: usable data plus skipped lines. -->
+            <InfoBar x:Name="PartialParseBar"
+                     Severity="Warning"
+                     Message="History file is incomplete. Showing what could be read."
+                     IsClosable="True"
+                     Closed="PartialParseBar_Closed" />
+
+            <!-- Read failure: cause plus the one action that can fix it. -->
+            <InfoBar x:Name="HistoryErrorBar"
+                     Severity="Error"
+                     IsClosable="True"
+                     Closed="HistoryErrorBar_Closed">
+                <InfoBar.Content>
+                    <Button Content="Check again" Click="CheckAgain_Click" />
+                </InfoBar.Content>
+            </InfoBar>
+        </StackPanel>
+    </ScrollViewer>
+</Page>

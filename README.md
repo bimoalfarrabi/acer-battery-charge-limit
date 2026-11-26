@@ -36,6 +36,10 @@ Fluent card and spacing tokens), built as the replacement for Care Center's batt
   asks for an inline confirmation, and the card hides itself when the machine has no
   dedicated GPU.
 - **Health** -- design vs full-charge capacity, wear, cycle count, voltage, charge rate.
+- **History** -- state-of-charge over 24 h, 7 d, 30 d, or 90 d, with charging,
+  discharging, and AC-idle sessions. A SYSTEM scheduled task samples every five
+  minutes, so history keeps recording while the app is closed. Data stays local and
+  is kept for 90 days.
 - **Settings** -- launch at login, re-apply the saved limit, restore log, JSON export,
   and the GitHub update check.
 - **Tray** -- icon with a quick-toggle menu and a live tooltip that keeps updating while
@@ -47,6 +51,10 @@ Battery telemetry is read in-process through `Windows.System.Power` and
 capacity update the moment they change. There is no spinner and no "updated at" caption:
 the values moving is the freshness signal. Only the charge limit, the GPU, voltage, and
 cycle count need the worker, and those reconcile silently in the background.
+
+The History page is the exception: it reads the JSONL files the separate
+`BattCtlHistory` task writes every five minutes, so the chart keeps filling while the
+app is closed. It never polls the worker or the mailbox.
 
 It reads battery telemetry even when the firmware charge-limit interface is unreachable, and
 it degrades honestly instead of guessing: an unknown limit state is shown as unknown, never
@@ -120,6 +128,8 @@ The CLI setup script:
 - creates the mailbox `C:\ProgramData\battctl\mailbox\` and grants *you* modify access,
 - registers the on-demand scheduled task **`BattCtl`** (runs as `SYSTEM`, highest privileges, 60 s cap),
 - registers the boot/resume task **`BattCtlResume`**, which re-applies the saved state,
+- registers the 5-minute **`BattCtlHistory`** task, which records battery telemetry for
+  the History page even while the app is closed,
 - adds `C:\Program Files\battctl` to the system `PATH`.
 
 After installation, `battctl` is available in any **new** terminal (already-open shells keep the old
@@ -133,9 +143,9 @@ A Windows installer built with Inno Setup ships on each
 [GitHub Release](https://github.com/bimoalfarrabi/acer-battery-charge-limit/releases):
 `BattCtl-Setup-<version>.exe` installs the desktop app, the worker/CLI, the scheduled
 tasks, the machine `PATH` entry and the Start Menu shortcut in one step, per-machine
-(one UAC prompt). Your settings and logs (`C:\ProgramData\battctl`,
+(one UAC prompt). Your settings, logs, and battery history (`C:\ProgramData\battctl`,
 `%LOCALAPPDATA%\BattCtl.App`) survive upgrades and are kept on uninstall unless you
-answer **Yes** to the "Also remove your settings and logs?" prompt.
+answer **Yes** to the "Also remove your settings, logs, and battery history?" prompt.
 
 The desktop app can update itself: it downloads `BattCtl-Setup-<version>.exe` from the
 release, verifies its SHA-256, and runs it silently after a UAC prompt -- the installer
@@ -302,6 +312,21 @@ Two details worth knowing:
   disagree with an OS that says 79.
 - `CycleCount` lives in `root\WMI:BatteryCycleCount`, not in `BatteryStaticData`.
 
+### Battery history
+
+The `BattCtlHistory` task runs `battctl-worker.ps1 -Action sample` as `SYSTEM` every
+five minutes. It appends one JSON line per sample to
+`C:\ProgramData\battctl\history\battery-YYYYMMDD.jsonl` while Windows is awake. The
+History page reads those files directly; the app never writes them, and the sampler
+never uses the mailbox or the Acer `BatteryControl` provider.
+
+A sample records the OS percentage, charge state, AC state, rate (often `null` on
+AC), remaining/full/design capacity, cycle count, and whether the 80% limit was set
+(`desired.txt`, not a firmware read-back). Files older than 90 days are deleted
+automatically. Sleep, shutdown, or a stopped task leave gaps, and the chart shows
+them as gaps instead of drawing a straight line. History is local only; uninstalling
+with the "also remove" option deletes it.
+
 ## Supported models
 
 If `battctl status` exits `2`, your firmware does not expose `BatteryControl`. Known-working
@@ -328,9 +353,10 @@ some Predator models. Reports for other models are welcome.
 .\uninstall.cmd        # one UAC prompt
 ```
 
-Removes both scheduled tasks, `C:\Program Files\battctl`, `C:\ProgramData\battctl`,
-`C:\Program Files\BattCtl.App`, the Start Menu shortcut, and the launch-at-login entry
-for every user profile.
+Removes the three scheduled tasks (`BattCtl`, `BattCtlResume`, `BattCtlHistory`),
+`C:\Program Files\battctl`, `C:\Program Files\BattCtl.App`, the Start Menu shortcut,
+and the launch-at-login entry for every user profile. `C:\ProgramData\battctl`,
+including the battery history, is kept unless you pass `-RemoveData`.
 
 ## WSL usage
 
@@ -357,7 +383,8 @@ build.ps1, run.ps1     source build wrappers (WSL UNC safe)
 build-installer.ps1    publish + Inno Setup installer build
 installer/             BattCtl.iss, provision/unprovision scripts
 src/BattCtl.App/       WinUI 3 app: Views, ViewModels, Services, Styles, Assets
-docs/                  UI architecture contract, design brief, WinUI 3 research
+docs/                  UI architecture contract, design brief, WinUI 3 research,
+                       battery history spec
 .github/workflows/     lint.yml (PowerShell lint), build-app.yml (WinUI build),
                        release.yml (tag-driven release with installer + checksums)
 ```

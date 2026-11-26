@@ -56,10 +56,12 @@ Therefore:
 
 ## Scope (agreed)
 
-Dashboard, Health, Settings — three pages. Charge limit on/off, battery
+Dashboard, Health, History, Settings: four pages. Charge limit on/off, battery
 percent, health/wear, design vs full capacity, cycle count, tray icon with a
-quick toggle, launch-at-login. Plus About, the restore log, a manual re-apply,
-and status export, since the scope was set to "compact lengkap".
+quick toggle, launch-at-login. History shows state-of-charge over 24 h / 7 d /
+30 d / 90 d with charging and discharging sessions, fed by a 5-minute SYSTEM
+sampler. Plus About, the restore log, a manual re-apply, and status export,
+since the scope was set to "compact lengkap".
 
 ## What the app must never do
 

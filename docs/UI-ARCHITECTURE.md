@@ -13,6 +13,7 @@ firmware state and the few fields only SYSTEM can see.
 ```
 BattCtl.App (WinUI 3, medium IL)
         |  reads directly: PowerManager, Battery.GetReport(), GetSystemPowerStatus
+        |  reads directly: history\battery-*.jsonl  (history tier)
         |  writes request.txt, triggers schtasks, polls result.txt  (worker tier only)
         v
 C:\ProgramData\battctl\mailbox\   <-- nonce-scoped mailbox
@@ -23,7 +24,9 @@ root\WMI:BatteryControl + root\WMI:Battery* telemetry
 ```
 
 The CLI (`battctl.ps1` / `battctl.cmd`) stays byte-compatible. The UI adds the
-`snapshot` and `gpu:*` worker commands and does not change any existing one.
+`snapshot` and `gpu:*` worker commands and does not change any existing one. The
+history sampler adds a direct-mode `sample` command; it is never part of the
+mailbox.
 
 ## Mailbox protocol (v2, backward compatible)
 
@@ -186,9 +189,9 @@ The worker runs under `-MultipleInstances IgnoreNew`. A second `schtasks /run`
 while a snapshot is in flight is a no-op, so the front end must tolerate
 `result.txt` never appearing and retry after its timeout.
 
-### Two data tiers
+### Three data tiers
 
-Battery telemetry has two tiers with different latencies, and the UI keeps them
+Battery telemetry has three tiers with different latencies, and the UI keeps them
 apart instead of polling one snapshot for everything.
 
 **Live tier (in-process, `Services/BatteryMonitor.cs`).** Percent, charge state,
@@ -204,7 +207,8 @@ capability, no package identity, no worker, no scheduled task.
   re-raises when a *displayed* value changed, so a tick that changes nothing
   touches no binding.
 - Sampling runs only while the window is visible, not minimized, and a battery
-  page (Dashboard or Health) is showing. Settings does not sample.
+  page (Dashboard or Health) is showing. Settings does not sample. This is the
+  live tier only; the History page uses the persisted history tier below.
 - A wall-clock vs stopwatch gap on the tick detects resume and forces a
   re-read; no window subclassing or `WM_POWERBROADCAST` is needed.
 
@@ -227,6 +231,24 @@ Measured on this machine: `BatteryReport` returned `Status=Idle`,
 `Idle` on AC is a real zero, not a missing value; `TimeSpan.MaxValue` is the
 unknown sentinel for discharge time; `BatteryFlag` cannot express "not
 charging", so the state comes from `BatteryReport.Status`.
+
+**History tier (SYSTEM task, JSONL).** The separate `BattCtlHistory` task runs
+`battctl-worker.ps1 -Action sample` every five minutes as `SYSTEM`. It appends one
+record per sample to `C:\ProgramData\battctl\history\battery-yyyyMMdd.jsonl`,
+keeps 90 days, and never touches the mailbox or `BatteryControl`. The app reads
+the files read-only through `Services/HistoryStore.cs`.
+
+- Record schema v1 is separate from snapshot schema 3: `v`, `t` (UTC), `pct`,
+  `state`, `ac`, `rateMw`, `remMWh`, `fullMWh`, `designMWh`, `cycleCount`,
+  `limitSet`.
+- `limitSet` comes from `desired.txt`; it means "the 80% limit was set", not a
+  firmware read-back.
+- Gaps are real: sleep, shutdown, or a stopped task produce no rows. The chart
+  breaks the line instead of interpolating.
+- The History page does not use the live tier or `UpdateSampling`; it loads the
+  selected range, builds sessions and the summary in `Services/HistoryAnalysis.cs`,
+  and draws a custom chart in `Views/HistoryChart.xaml`.
+- Full format, retention, and install rules: `docs/BATTERY-HISTORY-SPEC.md`.
 
 ### Measured cost (2026-10-30, this machine)
 
@@ -256,13 +278,20 @@ src/BattCtl.App/
   Program.cs                  STAThread entry, ComWrappers, DispatcherQueue
   App.xaml(.cs)               resources, Mica, single-instance activation
   MainWindow.xaml(.cs)        shell: NavigationView + Mica backdrop
-  Views/                      DashboardPage, HealthPage, SettingsPage
+  Views/                      DashboardPage, HealthPage, HistoryPage,
+                              HistoryChart, SettingsPage
   Styles/                     Fluent token overrides, control styles
   Services/
     BattCtlClient.cs          mailbox IPC, nonce, retry, error mapping
     SnapshotModel.cs          JSON DTOs matching the contract above
+    HistoryStore.cs           read-only JSONL history reader
+    HistoryModels.cs          history DTOs, sessions, summary
+    HistoryAnalysis.cs        sessions, summary, coverage, formatting
     StartupService.cs         HKCU Run key registration
     TrayService.cs            tray icon + quick toggle
+  ViewModels/
+    MainViewModel.cs          live battery + worker state
+    HistoryViewModel.cs       cached history range, load/refresh state
   Assets/
 build.ps1                     dotnet build -c Release -p:Platform=x64
 ```

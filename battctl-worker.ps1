@@ -1,5 +1,5 @@
 param(
-    [ValidateSet('', 'status', 'on', 'off', 'toggle', 'restore', 'snapshot',
+    [ValidateSet('', 'status', 'on', 'off', 'toggle', 'restore', 'snapshot', 'sample',
         'gpu:status', 'gpu:on', 'gpu:off')]
     [string]$Action = ''
 )
@@ -31,6 +31,8 @@ $ResPath = Join-Path $Mailbox 'result.txt'
 $DataDir = 'C:\ProgramData\battctl'
 $DesiredPath = Join-Path $DataDir 'desired.txt'
 $RestoreLogPath = Join-Path $DataDir 'restore.log'
+$HistoryDir = Join-Path $DataDir 'history'
+$HistoryRetentionDays = 90
 
 $script:msg = New-Object System.Collections.Generic.List[string]
 function Say([string]$s) { $script:msg.Add([string]$s) }
@@ -330,6 +332,116 @@ function Get-SnapshotRestoreLog {
     }
 }
 
+function Get-BatteryTelemetry {
+    # Every key is always present; $null means unknown. Shared by the snapshot
+    # and the history sampler so the two readings can never drift apart.
+    $battery = [ordered]@{
+        present = $false
+        percent = $null
+        state = $null
+        powerOnline = $null
+        designCapacityMWh = $null
+        fullChargeCapacityMWh = $null
+        wearPercent = $null
+        cycleCount = $null
+        voltageMv = $null
+        rateMw = $null
+        remainingCapacityMWh = $null
+        estimatedMinutes = $null
+    }
+
+    $staticData = $null
+    try { $staticData = Get-WmiObject -Namespace root\WMI -Class BatteryStaticData -ErrorAction Stop | Select-Object -First 1 } catch { $staticData = $null }
+
+    $cycleCountData = $null
+    try { $cycleCountData = Get-WmiObject -Namespace root\WMI -Class BatteryCycleCount -ErrorAction Stop | Select-Object -First 1 } catch { $cycleCountData = $null }
+
+    $fullCapacityData = $null
+    try { $fullCapacityData = Get-WmiObject -Namespace root\WMI -Class BatteryFullChargedCapacity -ErrorAction Stop | Select-Object -First 1 } catch { $fullCapacityData = $null }
+
+    $batteryStatusData = $null
+    try { $batteryStatusData = Get-WmiObject -Namespace root\WMI -Class BatteryStatus -ErrorAction Stop | Select-Object -First 1 } catch { $batteryStatusData = $null }
+
+    $win32Battery = $null
+    try { $win32Battery = Get-WmiObject -Namespace root\cimv2 -Class Win32_Battery -ErrorAction Stop | Select-Object -First 1 } catch { $win32Battery = $null }
+
+    $designCapacity = Get-NullableNumber $staticData 'DesignedCapacity'
+    $cycleCount = Get-NullableNumber $cycleCountData 'CycleCount'
+    $fullChargeCapacity = Get-NullableNumber $fullCapacityData 'FullChargedCapacity'
+    $remainingCapacity = Get-NullableNumber $batteryStatusData 'RemainingCapacity'
+    $voltage = Get-NullableNumber $batteryStatusData 'Voltage'
+    $rate = Get-NullableNumber $batteryStatusData 'Rate'
+    $estimatedPercent = Get-NullableNumber $win32Battery 'EstimatedChargeRemaining'
+    $win32State = Get-NullableNumber $win32Battery 'BatteryStatus'
+    $charging = $null
+    $discharging = $null
+    $powerOnline = $null
+    if ($null -ne $batteryStatusData) {
+        $charging = Get-NullableBoolean $batteryStatusData.Charging
+        $discharging = Get-NullableBoolean $batteryStatusData.Discharging
+        $powerOnline = Get-NullableBoolean $batteryStatusData.PowerOnline
+    }
+
+    $state = 'Unknown'
+    if ($null -ne $batteryStatusData) {
+        if ($null -ne $charging -and $charging) {
+            $state = 'Charging'
+        } elseif ($null -ne $discharging -and $discharging) {
+            $state = 'Discharging'
+        } elseif ($null -ne $charging -and $null -ne $discharging) {
+            $state = 'NotCharging'
+        }
+    } elseif ($null -ne $win32State) {
+        switch ([int]$win32State) {
+            1 { $state = 'Discharging' }
+            { $_ -in 6, 7, 8, 9 } { $state = 'Charging' }
+            { $_ -in 2, 3, 11 } { $state = 'NotCharging' }
+            default { $state = 'Unknown' }
+        }
+    }
+
+    $percent = $null
+    # Match the OS taskbar/Settings reading when available; capacity math is only a fallback.
+    if ($null -ne $estimatedPercent -and $estimatedPercent -ge 0 -and $estimatedPercent -le 100) {
+        $percent = [int]$estimatedPercent
+    } elseif ($null -ne $remainingCapacity -and $null -ne $fullChargeCapacity -and $fullChargeCapacity -ne 0) {
+        $percent = [int][Math]::Round(
+            (([double]$remainingCapacity / [double]$fullChargeCapacity) * 100),
+            [MidpointRounding]::AwayFromZero
+        )
+    }
+
+    $wearPercent = $null
+    if ($null -ne $designCapacity -and $designCapacity -ne 0 -and
+        $null -ne $fullChargeCapacity -and $fullChargeCapacity -ne 0) {
+        if ($fullChargeCapacity -gt $designCapacity) {
+            $wearPercent = 0
+        } else {
+            $wearPercent = [Math]::Round((1 - ([double]$fullChargeCapacity / [double]$designCapacity)) * 100, 1)
+        }
+    }
+
+    $estimatedMinutes = $null
+    if ($state -eq 'Discharging' -and $null -ne $rate -and $rate -lt 0 -and $null -ne $remainingCapacity) {
+        $estimatedMinutes = [long][Math]::Round(([Math]::Abs([double]$remainingCapacity) / [Math]::Abs([double]$rate)) * 60)
+    }
+
+    $battery.present = ($null -ne $staticData -or $null -ne $fullCapacityData -or
+        $null -ne $batteryStatusData -or $null -ne $win32Battery)
+    $battery.percent = $percent
+    $battery.state = $state
+    $battery.powerOnline = $powerOnline
+    $battery.designCapacityMWh = $designCapacity
+    $battery.fullChargeCapacityMWh = $fullChargeCapacity
+    $battery.wearPercent = $wearPercent
+    $battery.cycleCount = $cycleCount
+    $battery.voltageMv = $voltage
+    $battery.rateMw = $rate
+    $battery.remainingCapacityMWh = $remainingCapacity
+    $battery.estimatedMinutes = $estimatedMinutes
+    return $battery
+}
+
 function Get-SnapshotJson([bool]$supported) {
     $desiredValue = $null
     try {
@@ -355,110 +467,7 @@ function Get-SnapshotJson([bool]$supported) {
         } catch { $limitOn = $null }
     }
 
-    $battery = [ordered]@{
-        present = $false
-        percent = $null
-        state = $null
-        powerOnline = $null
-        designCapacityMWh = $null
-        fullChargeCapacityMWh = $null
-        wearPercent = $null
-        cycleCount = $null
-        voltageMv = $null
-        rateMw = $null
-        remainingCapacityMWh = $null
-        estimatedMinutes = $null
-    }
-
-        $staticData = $null
-        try { $staticData = Get-WmiObject -Namespace root\WMI -Class BatteryStaticData -ErrorAction Stop | Select-Object -First 1 } catch { $staticData = $null }
-
-        $cycleCountData = $null
-        try { $cycleCountData = Get-WmiObject -Namespace root\WMI -Class BatteryCycleCount -ErrorAction Stop | Select-Object -First 1 } catch { $cycleCountData = $null }
-
-        $fullCapacityData = $null
-        try { $fullCapacityData = Get-WmiObject -Namespace root\WMI -Class BatteryFullChargedCapacity -ErrorAction Stop | Select-Object -First 1 } catch { $fullCapacityData = $null }
-
-        $batteryStatusData = $null
-        try { $batteryStatusData = Get-WmiObject -Namespace root\WMI -Class BatteryStatus -ErrorAction Stop | Select-Object -First 1 } catch { $batteryStatusData = $null }
-
-        $win32Battery = $null
-        try { $win32Battery = Get-WmiObject -Namespace root\cimv2 -Class Win32_Battery -ErrorAction Stop | Select-Object -First 1 } catch { $win32Battery = $null }
-
-        $designCapacity = Get-NullableNumber $staticData 'DesignedCapacity'
-        $cycleCount = Get-NullableNumber $cycleCountData 'CycleCount'
-        $fullChargeCapacity = Get-NullableNumber $fullCapacityData 'FullChargedCapacity'
-        $remainingCapacity = Get-NullableNumber $batteryStatusData 'RemainingCapacity'
-        $voltage = Get-NullableNumber $batteryStatusData 'Voltage'
-        $rate = Get-NullableNumber $batteryStatusData 'Rate'
-        $estimatedPercent = Get-NullableNumber $win32Battery 'EstimatedChargeRemaining'
-        $win32State = Get-NullableNumber $win32Battery 'BatteryStatus'
-        $charging = $null
-        $discharging = $null
-        $powerOnline = $null
-        if ($null -ne $batteryStatusData) {
-            $charging = Get-NullableBoolean $batteryStatusData.Charging
-            $discharging = Get-NullableBoolean $batteryStatusData.Discharging
-            $powerOnline = Get-NullableBoolean $batteryStatusData.PowerOnline
-        }
-
-        $state = 'Unknown'
-        if ($null -ne $batteryStatusData) {
-            if ($null -ne $charging -and $charging) {
-                $state = 'Charging'
-            } elseif ($null -ne $discharging -and $discharging) {
-                $state = 'Discharging'
-            } elseif ($null -ne $charging -and $null -ne $discharging) {
-                $state = 'NotCharging'
-            }
-        } elseif ($null -ne $win32State) {
-            switch ([int]$win32State) {
-                1 { $state = 'Discharging' }
-                { $_ -in 6, 7, 8, 9 } { $state = 'Charging' }
-                { $_ -in 2, 3, 11 } { $state = 'NotCharging' }
-                default { $state = 'Unknown' }
-            }
-        }
-
-        $percent = $null
-        # Match the OS taskbar/Settings reading when available; capacity math is only a fallback.
-        if ($null -ne $estimatedPercent -and $estimatedPercent -ge 0 -and $estimatedPercent -le 100) {
-            $percent = [int]$estimatedPercent
-        } elseif ($null -ne $remainingCapacity -and $null -ne $fullChargeCapacity -and $fullChargeCapacity -ne 0) {
-            $percent = [int][Math]::Round(
-                (([double]$remainingCapacity / [double]$fullChargeCapacity) * 100),
-                [MidpointRounding]::AwayFromZero
-            )
-        }
-
-        $wearPercent = $null
-        if ($null -ne $designCapacity -and $designCapacity -ne 0 -and
-            $null -ne $fullChargeCapacity -and $fullChargeCapacity -ne 0) {
-            if ($fullChargeCapacity -gt $designCapacity) {
-                $wearPercent = 0
-            } else {
-                $wearPercent = [Math]::Round((1 - ([double]$fullChargeCapacity / [double]$designCapacity)) * 100, 1)
-            }
-        }
-
-        $estimatedMinutes = $null
-        if ($state -eq 'Discharging' -and $null -ne $rate -and $rate -lt 0 -and $null -ne $remainingCapacity) {
-            $estimatedMinutes = [long][Math]::Round(([Math]::Abs([double]$remainingCapacity) / [Math]::Abs([double]$rate)) * 60)
-        }
-
-        $battery.present = ($null -ne $staticData -or $null -ne $fullCapacityData -or
-            $null -ne $batteryStatusData -or $null -ne $win32Battery)
-        $battery.percent = $percent
-        $battery.state = $state
-        $battery.powerOnline = $powerOnline
-        $battery.designCapacityMWh = $designCapacity
-        $battery.fullChargeCapacityMWh = $fullChargeCapacity
-        $battery.wearPercent = $wearPercent
-        $battery.cycleCount = $cycleCount
-        $battery.voltageMv = $voltage
-        $battery.rateMw = $rate
-        $battery.remainingCapacityMWh = $remainingCapacity
-        $battery.estimatedMinutes = $estimatedMinutes
+    $battery = Get-BatteryTelemetry
     $snapshot = [ordered]@{
         schema = 3
         limitOn = $limitOn
@@ -482,6 +491,96 @@ function Write-SnapshotResult([string]$json, [int]$code) {
     }
     Say $json
     Emit $nonce $code
+}
+
+function Add-HistorySample {
+    # One JSONL line per sample in a per-LOCAL-day file. Throws on failure so
+    # the caller can turn it into exit 1; a missing battery writes nothing.
+    $battery = Get-BatteryTelemetry
+    if (-not $battery.present -or $null -eq $battery.percent) { return }
+
+    # limitSet is the desired state from desired.txt, not the firmware
+    # read-back, so the 80% guide still draws when the provider is unreadable.
+    $limitSet = $null
+    try {
+        $desiredText = [IO.File]::ReadAllText($DesiredPath)
+        if ($desiredText.Trim() -match '^[01]$') { $limitSet = ([int]$desiredText.Trim() -eq 1) }
+    } catch { $limitSet = $null }
+
+    # Invariant culture everywhere: the reader parses with InvariantCulture too.
+    $stamp = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ', [Globalization.CultureInfo]::InvariantCulture)
+    $record = [ordered]@{
+        v = 1
+        t = $stamp
+        pct = $battery.percent
+        state = $battery.state
+        ac = $battery.powerOnline
+        rateMw = $battery.rateMw
+        remMWh = $battery.remainingCapacityMWh
+        fullMWh = $battery.fullChargeCapacityMWh
+        designMWh = $battery.designCapacityMWh
+        cycleCount = $battery.cycleCount
+        limitSet = $limitSet
+    }
+    $json = ConvertTo-Json -InputObject $record -Depth 4 -Compress
+    if ($json.Contains("`r") -or $json.Contains("`n")) { $json = $json -replace '[\r\n]', '' }
+    if ($json.Contains("`r") -or $json.Contains("`n")) { throw 'History JSON contains a newline.' }
+
+    $dayStamp = (Get-Date).ToString('yyyyMMdd', [Globalization.CultureInfo]::InvariantCulture)
+    $historyFile = Join-Path $HistoryDir ("battery-$dayStamp.jsonl")
+    New-Item -ItemType Directory -Force -Path $HistoryDir | Out-Null
+
+    # One writer (SYSTEM) but the app reads concurrently, so appends are
+    # serialized process-wide; 5 s is generous for a one-line append.
+    $mutex = New-Object System.Threading.Mutex($false, 'Global\battctl-history')
+    $held = $false
+    try {
+        try { $held = $mutex.WaitOne([TimeSpan]::FromSeconds(5)) } catch [System.Threading.AbandonedMutexException] { $held = $true }
+        if (-not $held) { throw 'timed out waiting for the history mutex' }
+        $utf8 = New-Object System.Text.UTF8Encoding($false)
+        $attempt = 0
+        while ($true) {
+            try {
+                [IO.File]::AppendAllText($historyFile, $json + "`r`n", $utf8)
+                break
+            } catch {
+                $attempt++
+                if ($attempt -gt 1) { throw }
+                # A sharing violation means a reader still holds the file; one
+                # short retry covers it without blocking the task.
+                Start-Sleep -Milliseconds 250
+            }
+        }
+    } finally {
+        if ($null -ne $mutex) {
+            if ($held) { $null = $mutex.ReleaseMutex() }
+            $mutex.Dispose()
+        }
+    }
+
+    # Retention runs on every sample and touches only battery-*.jsonl day files.
+    $cutoff = (Get-Date).Date.AddDays(-$HistoryRetentionDays)
+    try {
+        Get-ChildItem -LiteralPath $HistoryDir -Filter 'battery-*.jsonl' -File -ErrorAction Stop | ForEach-Object {
+            $nameMatch = [regex]::Match($_.Name, '^battery-(\d{8})\.jsonl$')
+            if ($nameMatch.Success) {
+                $fileDate = [DateTime]::MinValue
+                $parsed = [DateTime]::TryParseExact(
+                    $nameMatch.Groups[1].Value,
+                    'yyyyMMdd',
+                    [Globalization.CultureInfo]::InvariantCulture,
+                    [Globalization.DateTimeStyles]::None,
+                    [ref]$fileDate
+                )
+                if ($parsed -and $fileDate -lt $cutoff) {
+                    Remove-Item -LiteralPath $_.FullName -Force -ErrorAction SilentlyContinue
+                }
+            }
+        }
+    } catch {
+        # Retention must never fail the sample; swallow like Log-Direct does.
+        Write-Debug ('history retention failed: ' + $_.Exception.Message)
+    }
 }
 
 $directMode = -not [string]::IsNullOrEmpty($Action)
@@ -511,6 +610,15 @@ if ($directMode -and $command -eq 'restore') {
     $desired = [int]$desiredText.Trim()
 } else {
     $desired = $null
+}
+
+# History sampling. Direct mode only, dispatched before the BatteryControl
+# search on purpose: sampling must work on models with no Acer provider and
+# must never touch $bc or the mailbox.
+if ($directMode -and $command -eq 'sample') {
+    try { Add-HistorySample; exit 0 } catch {
+        Direct-Exit 1 ('history sample failed: ' + $_.Exception.Message)
+    }
 }
 
 # ---------------- WMI --------------------------------------------------------

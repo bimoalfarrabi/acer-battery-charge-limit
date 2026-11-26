@@ -9,6 +9,8 @@
       * copies it to C:\Program Files\BattCtl.App
       * refreshes the worker in C:\Program Files\battctl, so the SYSTEM task
         picks up the new `snapshot` command
+      * re-provisions the worker tasks via battctl-install.ps1, so a source
+        checkout also gets the BattCtlHistory sampler
       * creates a Start Menu shortcut
 
     Re-run after any UI change. Safe to run repeatedly.
@@ -73,6 +75,15 @@ if (Test-Path $workerSrc) {
 if (Test-Path $cliSrc) {
     Copy-Item -Path $cliSrc -Destination $cliDst -Force
     Write-Host "CLI refreshed: $cliDst"
+}
+
+# Re-provision so a source checkout also gets the worker's scheduled plumbing
+# (the BattCtlHistory sampler) without running battctl-install.ps1 by hand.
+$installer = Join-Path $repoRoot 'battctl-install.ps1'
+if (Test-Path $installer) {
+    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$installer" -Quiet -ProvisionOnly
+    if ($LASTEXITCODE -ne 0) { throw "battctl-install.ps1 -ProvisionOnly failed with exit code $LASTEXITCODE." }
+    Write-Host 'History sampler task provisioned: BattCtlHistory'
 }
 
 if (-not $NoShortcut) {

@@ -74,6 +74,13 @@ public sealed partial class MainWindow : Window
             {
                 App.ViewModel?.Telemetry.Refresh();
                 TryDebouncedWorkerRefresh();
+
+                // History: a stamp check, not a reload. The sampler writes on
+                // its own schedule; nothing to do until the files change.
+                if (ContentFrame.CurrentSourcePageType == typeof(HistoryPage))
+                {
+                    _ = App.History?.RefreshFromStampAsync();
+                }
             }
         };
 
@@ -95,6 +102,7 @@ public sealed partial class MainWindow : Window
                 return arg["--page=".Length..].ToLowerInvariant() switch
                 {
                     "health" => typeof(HealthPage),
+                    "history" => typeof(HistoryPage),
                     "settings" => typeof(SettingsPage),
                     _ => typeof(DashboardPage)
                 };
@@ -106,10 +114,32 @@ public sealed partial class MainWindow : Window
 
     private void SelectInitialPage()
     {
-        NavigationViewControl.SelectedItem = _initialPage == typeof(HealthPage) ? NavigationViewControl.MenuItems[1]
-            : _initialPage == typeof(SettingsPage) ? NavigationViewControl.MenuItems[2]
-            : DashboardItem;
+        NavigationViewControl.SelectedItem = FindNavItemByTag(PageTag(_initialPage)) ?? DashboardItem;
     }
+
+    // Menu index lookups broke the moment a page was inserted; a tag lookup
+    // survives that. Case-insensitive so "history" and "History" both work.
+    private NavigationViewItem? FindNavItemByTag(string tag)
+    {
+        foreach (var item in NavigationViewControl.MenuItems)
+        {
+            if (item is NavigationViewItem navItem
+                && string.Equals(navItem.Tag?.ToString(), tag, StringComparison.OrdinalIgnoreCase))
+            {
+                return navItem;
+            }
+        }
+
+        return null;
+    }
+
+    private static string PageTag(System.Type pageType) => pageType.Name switch
+    {
+        nameof(HealthPage) => "Health",
+        nameof(HistoryPage) => "History",
+        nameof(SettingsPage) => "Settings",
+        _ => "Dashboard",
+    };
 
     // Telemetry samples only while the window is visible, not minimized, and a
     // battery page is on screen. Settings needs no sampling.
@@ -160,6 +190,7 @@ public sealed partial class MainWindow : Window
         {
             "Dashboard" => typeof(DashboardPage),
             "Health" => typeof(HealthPage),
+            "History" => typeof(HistoryPage),
             "Settings" => typeof(SettingsPage),
             _ => null
         };
@@ -177,9 +208,7 @@ public sealed partial class MainWindow : Window
         _navigating = true;
         try
         {
-            var item = pageType == typeof(SettingsPage) ? NavigationViewControl.MenuItems[2]
-                : pageType == typeof(HealthPage) ? NavigationViewControl.MenuItems[1]
-                : (object)DashboardItem;
+            var item = FindNavItemByTag(PageTag(pageType)) ?? (object)DashboardItem;
             if (!ReferenceEquals(NavigationViewControl.SelectedItem, item))
             {
                 // Setting SelectedItem raises SelectionChanged, which re-enters
